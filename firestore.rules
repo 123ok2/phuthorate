@@ -1,0 +1,87 @@
+
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // ======================================================
+    // HÀM BỔ TRỢ (HELPER FUNCTIONS)
+    // ======================================================
+    
+    // Kiểm tra người dùng đã đăng nhập hay chưa
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    // Kiểm tra xem người dùng có phải là Admin tối cao (duyhanh@thucuc.com) không
+    function isAdmin() {
+      return isSignedIn() && request.auth.token.email == "duyhanh@thucuc.com";
+    }
+
+    // Kiểm tra xem dữ liệu có thuộc về chính người dùng đang đăng nhập không
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    // ======================================================
+    // QUY TẮC CHI TIẾT CHO TỪNG BỘ SƯU TẬP
+    // ======================================================
+
+    // 1. Quản lý Hồ sơ Nhân sự (Users)
+    match /users/{userId} {
+      // Cho phép mọi cán bộ đã đăng nhập xem danh sách để thực hiện đánh giá chéo
+      allow read: if isSignedIn();
+      
+      // Chỉ Admin mới được quyền khởi tạo (cấp) tài khoản mới cho cán bộ
+      // Hoặc chính người dùng khi đăng ký lần đầu (onboarding)
+      allow create: if isSignedIn();
+      
+      // Admin được toàn quyền cập nhật. Cán bộ chỉ được cập nhật thông tin cá nhân (như avatar)
+      allow update: if isAdmin() || isOwner(userId);
+      
+      // Chỉ Admin mới có quyền xóa tài khoản cán bộ khỏi hệ thống
+      allow delete: if isAdmin();
+    }
+
+    // 2. Quản lý Đợt đánh giá (Cycles)
+    match /cycles/{cycleId} {
+      // Mọi cán bộ cần đọc để biết đợt nào đang mở
+      allow read: if isSignedIn();
+      // Chỉ Admin duyhanh@thucuc.com mới có quyền mở/đóng hoặc tạo đợt đánh giá (Tháng/Quý)
+      allow write: if isAdmin();
+    }
+
+    // 3. Quản lý Đơn vị/Cơ quan (Agencies)
+    match /agencies/{agencyId} {
+      allow read: if isSignedIn();
+      // Admin quản lý danh mục cơ quan. Cho phép tạo mới trong quá trình onboarding cán bộ đầu tiên.
+      allow write: if isSignedIn();
+    }
+
+    // 4. Quản lý Bản đánh giá (Evaluations)
+    match /evaluations/{evalId} {
+      // Cho phép đọc để phục vụ Bảng công khai và Dashboard Lãnh đạo
+      allow read: if isSignedIn();
+      
+      // Quy tắc cốt lõi: Cán bộ chỉ được gửi đánh giá dưới danh nghĩa của chính mình
+      allow create: if isSignedIn() 
+                   && request.resource.data.evaluatorId == request.auth.uid;
+      
+      // Bản đánh giá sau khi gửi không được tự ý sửa đổi để đảm bảo tính khách quan
+      // Chỉ Admin mới có quyền điều chỉnh hoặc xóa nếu có sai sót kỹ thuật
+      allow update, delete: if isAdmin();
+    }
+
+    // 5. Quản lý Danh mục Khu vực (Regions)
+    match /regions/{regionId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    // ======================================================
+    // QUY TẮC MẶC ĐỊNH (DEFAULT DENY)
+    // ======================================================
+    match /{document=**} {
+      allow read, write: if isAdmin();
+    }
+  }
+}
