@@ -49,6 +49,7 @@ export interface EvaluationCycle {
   startDate: string;
   endDate: string;
   status: 'ACTIVE' | 'CLOSED' | 'UPCOMING';
+  targetAgencyIds: string[]; // ['all'] hoặc danh sách ID cơ quan cụ thể
 }
 
 export interface PerformanceStats {
@@ -59,9 +60,6 @@ export interface PerformanceStats {
   rankInAgency: number;
 }
 
-/**
- * Added AIAnalysis interface to fix the module export error.
- */
 export interface AIAnalysis {
   summary: string;
   strengths: string[];

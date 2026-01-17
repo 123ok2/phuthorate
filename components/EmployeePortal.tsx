@@ -22,8 +22,11 @@ const EmployeePortal: React.FC<EmployeePortalProps> = ({ user }) => {
   const [scores, setScores] = useState<EvaluationCriteria>({ professionalism: 5, productivity: 5, collaboration: 5, innovation: 5, discipline: 5 });
   const [submitting, setSubmitting] = useState(false);
 
+  // Avatar mặc định phong cách công sở chuyên nghiệp
   const getAvatarUrl = (u: Partial<User>) => {
-    return u.avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(u.name || 'CB')}&background=3b82f6&color=fff&bold=true`;
+    if (u.avatar && u.avatar.startsWith('data:image')) return u.avatar;
+    const name = u.name || 'CB';
+    return `https://ui-avatars.com/api/?name=${encodeURIComponent(name)}&background=1e293b&color=f8fafc&bold=true&format=svg&size=128`;
   };
 
   useEffect(() => {
@@ -35,18 +38,19 @@ const EmployeePortal: React.FC<EmployeePortalProps> = ({ user }) => {
           getDocs(collection(db, "agencies"))
         ]);
         
-        const cyclesData = cyclesSnap.docs.map(d => ({ id: d.id, ...d.data() } as EvaluationCycle));
-        setCycles(cyclesData);
+        const allCyclesData = cyclesSnap.docs.map(d => ({ id: d.id, ...d.data() } as EvaluationCycle));
+        const filteredCycles = allCyclesData.filter(c => 
+          c.targetAgencyIds?.includes('all') || c.targetAgencyIds?.includes(user.agencyId)
+        );
+        setCycles(filteredCycles);
         
         const agenciesData = agenciesSnap.docs.map(d => ({ id: d.id, ...d.data() } as Agency));
         setAgencies(agenciesData);
         
-        // Mặc định chọn đợt ACTIVE đầu tiên nếu có
-        const currentActive = cyclesData.find(c => c.status === 'ACTIVE');
+        const currentActive = filteredCycles.find(c => c.status === 'ACTIVE');
         if (currentActive) setSelectedCycleId(currentActive.id);
         else setSelectedCycleId('all');
 
-        // Mặc định lọc theo cơ quan của bản thân
         setFilterAgencyId(user.agencyId);
 
         const peersQuery = query(collection(db, "users"), where("role", "==", "EMPLOYEE"));
@@ -65,6 +69,20 @@ const EmployeePortal: React.FC<EmployeePortalProps> = ({ user }) => {
     };
     fetchData();
   }, [user.id, user.agencyId]);
+
+  const selectedCycle = useMemo(() => cycles.find(c => c.id === selectedCycleId), [cycles, selectedCycleId]);
+
+  const cycleTimeStatus = useMemo(() => {
+    if (!selectedCycle) return 'NONE';
+    const now = new Date();
+    const start = new Date(selectedCycle.startDate);
+    const end = new Date(selectedCycle.endDate);
+    end.setHours(23, 59, 59, 999); // Tính đến cuối ngày kết thúc
+
+    if (now < start) return 'UPCOMING';
+    if (now > end) return 'EXPIRED';
+    return 'OPEN';
+  }, [selectedCycle]);
 
   const filteredPeers = useMemo(() => {
     if (filterAgencyId === 'all') return allPeers;
@@ -94,8 +112,12 @@ const EmployeePortal: React.FC<EmployeePortalProps> = ({ user }) => {
   }, [filteredMyEvaluations]);
 
   const submitEvaluation = async () => {
+    if (cycleTimeStatus !== 'OPEN') {
+      alert("ĐỢT ĐÁNH GIÁ ĐANG KHÓA HOẶC NGOÀI THỜI GIAN QUY ĐỊNH!");
+      return;
+    }
     if (!evaluatingPeer || !selectedCycleId || selectedCycleId === 'all') {
-      alert("VUI LÒNG CHỌN MỘT ĐỢT ĐÁNH GIÁ CỤ THỂ ĐANG MỞ!");
+      alert("VUI LÒNG CHỌN ĐỢT ĐÁNH GIÁ HỢP LỆ!");
       return;
     }
 
@@ -137,24 +159,22 @@ const EmployeePortal: React.FC<EmployeePortalProps> = ({ user }) => {
 
   return (
     <div className="space-y-6 pb-20">
-      {/* Header Portal */}
       <div className="flex flex-col gap-6">
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-black text-slate-900 uppercase tracking-tight">Cổng Đánh giá Nhân sự</h1>
-            <p className="text-slate-400 text-[10px] font-bold uppercase tracking-widest mt-1">Đánh giá chéo năng lực cán bộ trong và ngoài đơn vị</p>
+            <p className="text-slate-400 text-[10px] font-bold uppercase tracking-widest mt-1">Lọc đợt đánh giá dành riêng cho đơn vị của bạn</p>
           </div>
 
           <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
-             {/* BỘ CHỌN ĐỢT ĐÁNH GIÁ */}
-             <div className="flex items-center gap-3 bg-white px-4 py-2.5 rounded-2xl border border-slate-200 shadow-sm">
-                <i className="fas fa-calendar-check text-blue-600 text-xs"></i>
-                <div className="flex flex-col">
+             <div className="flex items-center gap-3 bg-white px-4 py-2.5 rounded-2xl border border-slate-200 shadow-sm min-w-[220px]">
+                <i className={`fas ${cycleTimeStatus === 'OPEN' ? 'fa-calendar-check text-emerald-500' : 'fa-calendar-times text-rose-500'} text-xs`}></i>
+                <div className="flex flex-col flex-1">
                   <span className="text-[8px] font-black text-slate-400 uppercase leading-none mb-1">Đợt đánh giá</span>
                   <select 
                     value={selectedCycleId} 
                     onChange={(e) => setSelectedCycleId(e.target.value)}
-                    className="bg-transparent border-none p-0 text-[11px] font-black uppercase text-slate-900 focus:ring-0 cursor-pointer"
+                    className="bg-transparent border-none p-0 text-[11px] font-black uppercase text-slate-900 focus:ring-0 cursor-pointer w-full"
                   >
                     <option value="all">TẤT CẢ CÁC ĐỢT</option>
                     {cycles.map(c => (
@@ -172,11 +192,28 @@ const EmployeePortal: React.FC<EmployeePortalProps> = ({ user }) => {
              </div>
           </div>
         </div>
+
+        {/* Thông báo thời hạn */}
+        {selectedCycle && (
+          <div className={`px-6 py-3 rounded-2xl border text-[10px] font-black uppercase tracking-widest flex items-center justify-between ${
+            cycleTimeStatus === 'OPEN' ? 'bg-emerald-50 border-emerald-100 text-emerald-600' : 
+            cycleTimeStatus === 'UPCOMING' ? 'bg-amber-50 border-amber-100 text-amber-600' :
+            'bg-rose-50 border-rose-100 text-rose-600'
+          }`}>
+             <div className="flex items-center gap-2">
+                <i className="fas fa-clock"></i>
+                <span>Thời hạn: {selectedCycle.startDate} ĐẾN {selectedCycle.endDate}</span>
+             </div>
+             <span>
+               {cycleTimeStatus === 'OPEN' ? 'HỆ THỐNG ĐANG MỞ' : 
+                cycleTimeStatus === 'UPCOMING' ? 'CHƯA TỚI GIỜ ĐÁNH GIÁ' : 'ĐÃ HẾT HẠN ĐÁNH GIÁ'}
+             </span>
+          </div>
+        )}
       </div>
 
       {activeTab === 'pending' ? (
         evaluatingPeer ? (
-          /* FORM ĐÁNH GIÁ CHI TIẾT */
           <div className="bg-white rounded-[2.5rem] border border-slate-200 shadow-2xl overflow-hidden animate-in zoom-in-95 duration-300">
              <div className="bg-slate-900 p-8 text-white flex items-center justify-between">
                 <div className="flex items-center gap-5">
@@ -189,19 +226,17 @@ const EmployeePortal: React.FC<EmployeePortalProps> = ({ user }) => {
                     </div>
                   </div>
                 </div>
-                <div className="text-right hidden sm:block">
-                   <p className="text-[9px] font-black text-slate-500 uppercase tracking-[0.2em] mb-1">Ghi nhận cho đợt</p>
-                   <p className="text-sm font-black text-white uppercase">
-                     {selectedCycleId === 'all' ? 'VUI LÒNG CHỌN ĐỢT' : (cycles.find(c => c.id === selectedCycleId)?.name || '---')}
-                   </p>
-                </div>
               </div>
 
               <div className="p-8 md:p-12 space-y-12">
-                {selectedCycleId === 'all' ? (
-                  <div className="text-center py-20 bg-slate-50 rounded-[2rem] border-2 border-dashed border-slate-200">
-                    <i className="fas fa-exclamation-circle text-4xl text-blue-500 mb-4"></i>
-                    <p className="text-slate-600 font-black uppercase text-xs">Vui lòng chọn một đợt đánh giá cụ thể từ menu phía trên để bắt đầu chấm điểm.</p>
+                {selectedCycleId === 'all' || cycleTimeStatus !== 'OPEN' ? (
+                  <div className="text-center py-20 bg-slate-50 rounded-[2rem] border-2 border-dashed border-slate-200 flex flex-col items-center gap-4">
+                    <i className="fas fa-lock text-3xl text-slate-300"></i>
+                    <p className="text-slate-600 font-black uppercase text-xs">
+                      {cycleTimeStatus === 'UPCOMING' ? 'ĐỢT ĐÁNH GIÁ CHƯA BẮT ĐẦU. VUI LÒNG QUAY LẠI SAU.' : 
+                       cycleTimeStatus === 'EXPIRED' ? 'ĐỢT ĐÁNH GIÁ ĐÃ KẾT THÚC THỜI HẠN QUY ĐỊNH.' :
+                       'VUI LÒNG CHỌN MỘT ĐỢT ĐÁNH GIÁ HỢP LỆ ĐỂ BẮT ĐẦU.'}
+                    </p>
                   </div>
                 ) : (
                   <div className="grid grid-cols-1 lg:grid-cols-2 gap-12">
@@ -228,7 +263,6 @@ const EmployeePortal: React.FC<EmployeePortalProps> = ({ user }) => {
                       ))}
                     </div>
                     <div className="space-y-5">
-                      <label className="text-[11px] font-black text-slate-400 uppercase tracking-widest">Lời nhắn góp ý (Không bắt buộc)</label>
                       <textarea 
                         rows={9} 
                         value={comment} 
@@ -238,11 +272,10 @@ const EmployeePortal: React.FC<EmployeePortalProps> = ({ user }) => {
                       />
                       <button 
                         onClick={submitEvaluation} 
-                        disabled={submitting || !selectedCycleId || selectedCycleId === 'all'} 
+                        disabled={submitting || cycleTimeStatus !== 'OPEN'} 
                         className="w-full bg-blue-600 text-white py-6 rounded-3xl font-black text-xs uppercase tracking-[0.3em] shadow-xl shadow-blue-600/20 hover:bg-slate-900 transition-all active:scale-[0.98] disabled:opacity-50"
                       >
-                        {submitting ? <i className="fas fa-circle-notch animate-spin mr-3"></i> : <i className="fas fa-check-circle mr-3"></i>}
-                        Xác nhận gửi đánh giá
+                        {submitting ? 'ĐANG LƯU...' : 'Gửi đánh giá'}
                       </button>
                     </div>
                   </div>
@@ -250,7 +283,6 @@ const EmployeePortal: React.FC<EmployeePortalProps> = ({ user }) => {
               </div>
           </div>
         ) : (
-          /* DANH SÁCH CÁN BỘ ĐỂ CHỌN */
           <div className="space-y-6">
             <div className="flex items-center gap-3 bg-white px-6 py-4 rounded-3xl border border-slate-200 shadow-sm max-w-md">
               <i className="fas fa-filter text-slate-400 text-xs"></i>
@@ -262,9 +294,7 @@ const EmployeePortal: React.FC<EmployeePortalProps> = ({ user }) => {
                   className="bg-transparent border-none p-0 text-[11px] font-black uppercase text-slate-900 focus:ring-0 cursor-pointer"
                 >
                   <option value="all">TẤT CẢ CƠ QUAN</option>
-                  {agencies.map(a => (
-                    <option key={a.id} value={a.id}>{a.name}</option>
-                  ))}
+                  {agencies.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
                 </select>
               </div>
             </div>
@@ -273,6 +303,7 @@ const EmployeePortal: React.FC<EmployeePortalProps> = ({ user }) => {
               {filteredPeers.map(peer => {
                 const alreadyDone = isAlreadyEvaluated(peer.id);
                 const isSameAgency = peer.agencyId === user.agencyId;
+                const canEvaluate = isSameAgency && cycleTimeStatus === 'OPEN' && !alreadyDone;
                 
                 return (
                   <div 
@@ -280,11 +311,7 @@ const EmployeePortal: React.FC<EmployeePortalProps> = ({ user }) => {
                     className={`group relative bg-white p-5 rounded-[2rem] border border-slate-200 shadow-sm flex items-center gap-4 transition-all ${alreadyDone ? 'bg-emerald-50/20 border-emerald-100' : 'hover:shadow-xl hover:border-blue-200'}`}
                   >
                     <div className="shrink-0 relative">
-                      <img 
-                        src={getAvatarUrl(peer)} 
-                        className={`w-16 h-16 rounded-2xl object-cover shadow-md border-2 border-white transition-all group-hover:scale-110 ${!isSameAgency ? 'opacity-70' : ''}`} 
-                        alt={peer.name}
-                      />
+                      <img src={getAvatarUrl(peer)} className="w-16 h-16 rounded-2xl object-cover shadow-md border-2 border-white transition-all group-hover:scale-110" alt={peer.name} />
                       {alreadyDone && (
                         <div className="absolute -top-2 -right-2 w-6 h-6 bg-emerald-500 text-white rounded-full flex items-center justify-center text-[10px] shadow-lg border-2 border-white">
                           <i className="fas fa-check"></i>
@@ -295,25 +322,19 @@ const EmployeePortal: React.FC<EmployeePortalProps> = ({ user }) => {
                     <div className="flex-1 min-w-0">
                       <h4 className="font-black text-slate-900 uppercase text-[11px] truncate mb-0.5 leading-none">{peer.name}</h4>
                       <p className="text-[9px] font-bold text-slate-400 uppercase tracking-tighter truncate">{peer.department}</p>
-                      
-                      <div className="flex items-center gap-2 mt-2">
-                        <span className={`text-[7px] font-black px-2 py-0.5 rounded-full uppercase tracking-widest border ${isSameAgency ? 'text-blue-600 bg-blue-50 border-blue-100' : 'text-slate-400 bg-slate-100 border-slate-200'}`}>
-                          {isSameAgency ? 'Cùng đơn vị' : 'Liên đơn vị'}
-                        </span>
-                      </div>
                     </div>
 
                     <div className="shrink-0">
                       {isSameAgency ? (
                         <button 
-                          onClick={() => !alreadyDone && setEvaluatingPeer(peer)}
-                          disabled={alreadyDone || selectedCycleId === 'all'}
-                          className={`w-10 h-10 rounded-xl flex items-center justify-center transition-all active:scale-90 ${alreadyDone ? 'bg-emerald-50 text-emerald-500' : (selectedCycleId === 'all' ? 'bg-slate-100 text-slate-300 cursor-not-allowed' : 'bg-blue-600 text-white hover:bg-slate-900 shadow-lg shadow-blue-500/20')}`}
+                          onClick={() => canEvaluate && setEvaluatingPeer(peer)}
+                          disabled={!canEvaluate}
+                          className={`w-10 h-10 rounded-xl flex items-center justify-center transition-all active:scale-90 ${alreadyDone ? 'bg-emerald-50 text-emerald-500' : (!canEvaluate ? 'bg-slate-100 text-slate-300 cursor-not-allowed' : 'bg-blue-600 text-white hover:bg-slate-900 shadow-lg shadow-blue-500/20')}`}
                         >
-                          <i className={`fas ${alreadyDone ? 'fa-check-double' : 'fa-chevron-right'}`}></i>
+                          <i className={`fas ${alreadyDone ? 'fa-check-double' : (cycleTimeStatus === 'OPEN' ? 'fa-chevron-right' : 'fa-lock')}`}></i>
                         </button>
                       ) : (
-                        <div className="w-10 h-10 bg-slate-50 text-slate-300 rounded-xl flex items-center justify-center border border-slate-100 opacity-60" title="Chế độ chỉ xem - Cán bộ khác đơn vị">
+                        <div className="w-10 h-10 bg-slate-50 text-slate-300 rounded-xl flex items-center justify-center border border-slate-100 opacity-60">
                           <i className="fas fa-lock text-[10px]"></i>
                         </div>
                       )}
@@ -321,62 +342,34 @@ const EmployeePortal: React.FC<EmployeePortalProps> = ({ user }) => {
                   </div>
                 );
               })}
-              
-              {filteredPeers.length === 0 && (
-                <div className="col-span-full py-20 text-center bg-white border-2 border-dashed border-slate-200 rounded-[3rem]">
-                   <i className="fas fa-users-slash text-4xl text-slate-100 mb-4"></i>
-                   <p className="text-slate-400 font-black text-[10px] uppercase tracking-widest">Không có cán bộ nào phù hợp bộ lọc</p>
-                </div>
-              )}
             </div>
           </div>
         )
       ) : (
-        /* BÁO CÁO CÁ NHÂN */
         <div className="space-y-6 animate-in fade-in duration-500">
           {stats ? (
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
               <div className="bg-white p-12 rounded-[3rem] border border-slate-200 shadow-sm text-center flex flex-col items-center justify-center group hover:border-blue-200 transition-all">
                 <div className="w-24 h-24 bg-blue-50 text-blue-600 rounded-[2rem] flex items-center justify-center mb-6 text-4xl font-black shadow-inner group-hover:scale-110 transition-transform">{stats.overallAverage}</div>
                 <h3 className="text-xl font-black text-slate-900 uppercase tracking-tight">Xếp loại: <span className="text-blue-600">{stats.rating}</span></h3>
-                <p className="text-slate-400 text-[9px] font-black uppercase tracking-[0.2em] mt-2">{stats.totalEvaluations} lượt đánh giá ghi nhận</p>
-                <p className="text-blue-500 text-[8px] font-black uppercase mt-1 tracking-widest">
-                  {selectedCycleId === 'all' ? 'TỔNG HỢP TOÀN CHU KỲ' : cycles.find(c => c.id === selectedCycleId)?.name}
-                </p>
               </div>
               <div className="lg:col-span-2 bg-white p-8 md:p-10 rounded-[3rem] border border-slate-200 shadow-sm">
                 <h3 className="text-[10px] font-black text-slate-900 uppercase tracking-widest mb-8 border-l-4 border-blue-600 pl-4">Góp ý từ đồng nghiệp</h3>
                 <div className="space-y-4 max-h-[350px] overflow-y-auto pr-3 custom-scrollbar">
-                  {filteredMyEvaluations.length > 0 ? (
-                    filteredMyEvaluations.map(e => (
-                      <div key={e.id} className="p-6 bg-slate-50 rounded-3xl border border-slate-100 hover:bg-white hover:border-blue-100 transition-all">
-                        <p className="text-slate-700 text-xs font-bold leading-relaxed italic uppercase">"{e.comment || 'KHÔNG CÓ NHẬN XÉT CỤ THỂ'}"</p>
-                        <div className="flex items-center justify-between mt-4 pt-3 border-t border-slate-200/50">
-                          <span className="text-[8px] font-black text-blue-600 uppercase tracking-widest">Chu kỳ: {cycles.find(c => c.id === e.cycleId)?.name || 'HỆ THỐNG'}</span>
-                          <span className="text-[8px] font-black text-slate-400 uppercase">{new Date(e.timestamp).toLocaleDateString('vi-VN')}</span>
-                        </div>
+                  {filteredMyEvaluations.map(e => (
+                    <div key={e.id} className="p-6 bg-slate-50 rounded-3xl border border-slate-100 hover:bg-white hover:border-blue-100 transition-all">
+                      <p className="text-slate-700 text-xs font-bold leading-relaxed italic uppercase">"{e.comment || 'KHÔNG CÓ NHẬN XÉT CỤ THỂ'}"</p>
+                      <div className="flex items-center justify-between mt-4 pt-3 border-t border-slate-200/50">
+                        <span className="text-[8px] font-black text-blue-600 uppercase tracking-widest">Chu kỳ: {cycles.find(c => c.id === e.cycleId)?.name || 'HỆ THỐNG'}</span>
                       </div>
-                    ))
-                  ) : (
-                    <div className="text-center py-10 space-y-2">
-                       <i className="fas fa-comment-slash text-slate-100 text-3xl"></i>
-                       <p className="text-slate-300 font-black text-[10px] uppercase">Chưa có lời nhận xét nào trong đợt này</p>
                     </div>
-                  )}
+                  ))}
                 </div>
               </div>
             </div>
           ) : (
             <div className="bg-white p-24 rounded-[4rem] border-2 border-dashed border-slate-200 text-center">
-              <div className="w-20 h-20 bg-slate-50 rounded-3xl flex items-center justify-center mx-auto mb-6">
-                <i className="fas fa-chart-line text-3xl text-slate-200"></i>
-              </div>
-              <p className="text-slate-400 font-black text-[10px] uppercase tracking-[0.3em]">
-                {selectedCycleId === 'all' 
-                  ? "Hệ thống chưa ghi nhận bất kỳ đánh giá nào về năng lực của bạn"
-                  : `Chưa có dữ liệu đánh giá trong ${cycles.find(c => c.id === selectedCycleId)?.name || 'đợt này'}`
-                }
-              </p>
+              <p className="text-slate-400 font-black text-[10px] uppercase tracking-[0.3em]">Chưa có dữ liệu đánh giá trong đợt này</p>
             </div>
           )}
         </div>

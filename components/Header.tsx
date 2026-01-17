@@ -16,15 +16,17 @@ const Header: React.FC<HeaderProps> = ({ user, onSwitchUser }) => {
   const [agencyName, setAgencyName] = useState<string>('ĐANG TẢI...');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Thống nhất logic lấy ảnh đại diện
+  // Thống nhất logic lấy ảnh đại diện chuyên nghiệp
   const getAvatarUrl = (u: User) => {
-    return u.avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(u.name)}&background=3b82f6&color=fff&bold=true`;
+    if (u.avatar && u.avatar.startsWith('data:image')) return u.avatar;
+    const name = u.name || 'CB';
+    return `https://ui-avatars.com/api/?name=${encodeURIComponent(name)}&background=1e293b&color=f8fafc&bold=true&format=svg&size=128`;
   };
 
   useEffect(() => {
     const fetchAgency = async () => {
       if (!user) return;
-      if (user.agencyId && user.agencyId !== 'all') {
+      if (user.agencyId && user.agencyId !== 'all' && user.agencyId !== 'SYSTEM') {
         try {
           const agencyDoc = await getDoc(doc(db, "agencies", user.agencyId));
           if (agencyDoc.exists()) {
@@ -90,8 +92,7 @@ const Header: React.FC<HeaderProps> = ({ user, onSwitchUser }) => {
           <img 
             src={getAvatarUrl(user)} 
             alt={user.name} 
-            className="w-10 h-10 md:w-11 md:h-11 rounded-2xl object-cover ring-2 ring-slate-100 shadow-sm"
-            onError={(e) => { (e.target as HTMLImageElement).src = `https://ui-avatars.com/api/?name=${encodeURIComponent(user.name)}&background=3b82f6&color=fff&bold=true` }}
+            className="w-10 h-10 md:w-11 md:h-11 rounded-2xl object-cover ring-2 ring-slate-100 shadow-sm bg-slate-100"
           />
           {updatingAvatar && (
             <div className="absolute inset-0 bg-white/60 rounded-2xl flex items-center justify-center">
@@ -110,9 +111,8 @@ const Header: React.FC<HeaderProps> = ({ user, onSwitchUser }) => {
               <div className="relative inline-block group">
                 <img 
                   src={getAvatarUrl(user)} 
-                  className="w-24 h-24 rounded-[2rem] object-cover border-4 border-white/10" 
+                  className="w-24 h-24 rounded-[2rem] object-cover border-4 border-white/10 bg-slate-800" 
                   alt="" 
-                  onError={(e) => { (e.target as HTMLImageElement).src = `https://ui-avatars.com/api/?name=${encodeURIComponent(user.name)}&background=3b82f6&color=fff&bold=true` }}
                 />
                 <button onClick={() => fileInputRef.current?.click()} className="absolute inset-0 bg-black/40 rounded-[2rem] opacity-0 group-hover:opacity-100 flex items-center justify-center"><i className="fas fa-camera"></i></button>
                 <input type="file" ref={fileInputRef} className="hidden" accept="image/*" onChange={handleAvatarChange} />
