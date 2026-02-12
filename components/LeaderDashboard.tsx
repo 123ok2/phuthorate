@@ -1,8 +1,8 @@
-
 import React, { useState, useEffect, useMemo } from 'react';
 import { User, Agency, Evaluation, EvaluationCycle } from '../types';
 import { db } from '../firebase';
 import { collection, onSnapshot, query, where } from 'firebase/firestore';
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, CartesianGrid } from 'recharts';
 
 interface LeaderDashboardProps { user: User; }
 
@@ -52,7 +52,7 @@ const LeaderDashboard: React.FC<LeaderDashboardProps> = ({ user }) => {
 
   const selectedCycle = useMemo(() => allCycles.find(c => c.id === selectedCycleId), [allCycles, selectedCycleId]);
 
-  // Logic tính toán bảng tiến độ
+  // Logic tính toán bảng tiến độ (Người đi đánh giá)
   const progressReport = useMemo(() => {
     if (!selectedCycle) return [];
     
@@ -99,12 +99,77 @@ const LeaderDashboard: React.FC<LeaderDashboardProps> = ({ user }) => {
     return report;
   }, [agencyStaff, allEvaluations, selectedCycleId, selectedCycle, onlyIncomplete]);
 
+  // Logic tính toán Phân bổ xếp loại (Người được đánh giá)
+  const ratingStats = useMemo(() => {
+    if (!selectedCycle || !selectedCycle.ratings || agencyStaff.length === 0) return [];
+
+    // Tạo các thùng chứa (buckets) dựa trên cấu hình xếp loại
+    // Sắp xếp rating từ điểm thấp đến cao để logic tìm bucket hoạt động đúng (find sẽ tìm cái đầu tiên thỏa mãn)
+    // Tuy nhiên logic dưới dùng find(score >= min), nên cần sắp xếp từ Cao xuống Thấp để khớp đúng nhất.
+    const sortedRatings = [...selectedCycle.ratings].sort((a, b) => b.minScore - a.minScore);
+    
+    const statsMap = sortedRatings.map(r => ({
+      name: r.label,
+      count: 0,
+      color: r.color,
+      id: r.id,
+      minScore: r.minScore
+    }));
+
+    // Duyệt qua từng nhân viên (trừ Admin)
+    agencyStaff.forEach(staff => {
+       if (staff.role === 'ADMIN') return;
+
+       // Lấy tất cả phiếu đánh giá dành cho nhân viên này trong đợt
+       const receivedEvals = allEvaluations.filter(e => e.evaluateeId === staff.id && e.cycleId === selectedCycleId);
+       
+       if (receivedEvals.length > 0) {
+          // Tính điểm trung bình tổng
+          let sumAvg = 0;
+          receivedEvals.forEach(e => {
+             const scores = Object.values(e.scores) as number[];
+             if (scores.length > 0) {
+                sumAvg += scores.reduce((a, b) => a + b, 0) / scores.length;
+             }
+          });
+          const finalScore = sumAvg / receivedEvals.length;
+
+          // Tìm xếp loại phù hợp
+          const rating = statsMap.find(r => finalScore >= r.minScore);
+          if (rating) {
+             rating.count++;
+          } else {
+             // Nếu điểm thấp hơn mức thấp nhất, gộp vào mức thấp nhất (hoặc xử lý riêng)
+             if (statsMap.length > 0) statsMap[statsMap.length - 1].count++;
+          }
+       }
+    });
+
+    // Đảo ngược lại để hiển thị biểu đồ từ Cao -> Thấp hoặc Thấp -> Cao tùy ý. 
+    // Ở đây giữ nguyên thứ tự Cao -> Thấp (Xuất sắc bên trái)
+    return statsMap;
+  }, [agencyStaff, allEvaluations, selectedCycle, selectedCycleId]);
+
   const lazyStaff = useMemo(() => progressReport.filter(p => p.percent === 0), [progressReport]);
 
   const handleCopyReminder = (p: any) => {
     const text = `[NHẮC NHỞ ĐÁNH GIÁ]\nKính gửi đồng chí: ${p.evaluator.name}\nHiện tại đợt "${selectedCycle?.name}" đang diễn ra. Đồng chí vẫn còn thiếu ${p.missingCount}/${p.totalRequired} lượt đánh giá cho các đồng nghiệp: ${p.missingNames.join(', ')}.\nVui lòng truy cập hệ thống Phú Thọ Rate để hoàn thành trước thời hạn. Trân trọng!`;
     navigator.clipboard.writeText(text);
     alert(`Đã sao chép nội dung nhắc nhở cho đồng chí ${p.evaluator.name}`);
+  };
+
+  const CustomTooltip = ({ active, payload, label }: any) => {
+    if (active && payload && payload.length) {
+      return (
+        <div className="bg-white p-3 rounded-xl shadow-xl border border-slate-100">
+          <p className="text-[10px] font-black uppercase text-slate-400 mb-1">{label}</p>
+          <p className="text-sm font-black text-slate-900" style={{ color: payload[0].payload.color }}>
+            {payload[0].value} Nhân sự
+          </p>
+        </div>
+      );
+    }
+    return null;
   };
 
   if (loading) return <div className="p-20 text-center animate-pulse text-[10px] font-black uppercase text-slate-400">Đang đồng bộ dữ liệu trực tuyến...</div>;
@@ -179,6 +244,51 @@ const LeaderDashboard: React.FC<LeaderDashboardProps> = ({ user }) => {
             </h3>
          </div>
       </div>
+
+      {/* BIỂU ĐỒ PHÂN BỔ KẾT QUẢ - MỚI THÊM */}
+      {ratingStats.length > 0 && (
+         <div className="bg-white p-6 md:p-8 rounded-[2.5rem] border border-slate-200 shadow-sm animate-fade-in-up">
+            <div className="flex items-center justify-between mb-6">
+               <div>
+                  <h3 className="text-lg font-black text-slate-900 uppercase">Phân bổ Kết quả</h3>
+                  <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">Dựa trên kết quả đánh giá hiện tại</p>
+               </div>
+               <div className="flex gap-2">
+                  {ratingStats.map((r, i) => (
+                     <div key={i} className="flex items-center gap-1.5 px-3 py-1 rounded-lg bg-slate-50 border border-slate-100">
+                        <span className="w-2 h-2 rounded-full" style={{ backgroundColor: r.color }}></span>
+                        <span className="text-[9px] font-black uppercase text-slate-600">{r.name}</span>
+                     </div>
+                  ))}
+               </div>
+            </div>
+            <div className="h-64 w-full">
+               <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={ratingStats} margin={{ top: 10, right: 30, left: 0, bottom: 0 }}>
+                     <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                     <XAxis 
+                        dataKey="name" 
+                        axisLine={false} 
+                        tickLine={false} 
+                        tick={{ fontSize: 10, fontWeight: 900, fill: '#94a3b8' }} 
+                        dy={10}
+                     />
+                     <YAxis 
+                        axisLine={false} 
+                        tickLine={false} 
+                        tick={{ fontSize: 10, fontWeight: 900, fill: '#94a3b8' }} 
+                     />
+                     <Tooltip content={<CustomTooltip />} cursor={{ fill: '#f8fafc' }} />
+                     <Bar dataKey="count" radius={[8, 8, 0, 0]} barSize={60} animationDuration={1500}>
+                        {ratingStats.map((entry, index) => (
+                           <Cell key={`cell-${index}`} fill={entry.color} />
+                        ))}
+                     </Bar>
+                  </BarChart>
+               </ResponsiveContainer>
+            </div>
+         </div>
+      )}
 
       <div className="bg-white rounded-[2.5rem] border border-slate-200 shadow-xl overflow-hidden">
         <div className="overflow-x-auto">
