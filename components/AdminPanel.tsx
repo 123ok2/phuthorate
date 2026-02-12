@@ -66,7 +66,6 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser }) => {
       startDate: cycle.startDate,
       endDate: cycle.endDate,
       targetAgencyIds: [...(cycle.targetAgencyIds || ['all'])],
-      // Tạo ID mới cho các bản sao để tránh trùng lặp logic
       criteria: cycle.criteria.map(c => ({ 
         ...c, 
         id: `crit_${Date.now()}_${Math.random().toString(36).substr(2, 5)}` 
@@ -76,9 +75,8 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser }) => {
         id: `rate_${Date.now()}_${Math.random().toString(36).substr(2, 5)}` 
       }))
     });
-    // Cuộn lên form để người dùng thấy dữ liệu đã được nạp
     formRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    alert("Đã nhân bản cấu hình đợt đánh giá. Vui lòng kiểm tra lại Tên và Thời gian!");
+    alert("Đã nhân bản cấu hình đợt đánh giá. Vui lòng kiểm tra lại Tên, Thời gian và Phạm vi!");
   };
 
   const handleExportCycleReport = async (cycle: EvaluationCycle) => {
@@ -230,8 +228,42 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser }) => {
     setNewCycle(prev => ({ ...prev, criteria: prev.criteria.filter(c => c.id !== id) }));
   };
 
+  // LOGIC CHỌN CƠ QUAN
+  const toggleTargetAgency = (agencyId: string, isEdit: boolean) => {
+    const currentCycle = isEdit ? editingCycle : newCycle;
+    if (!currentCycle) return;
+    
+    let currentIds = [...(currentCycle.targetAgencyIds || [])];
+    
+    // Nếu đang chọn "Toàn bộ" mà người dùng click chọn 1 cơ quan -> Xóa "all" và thêm cơ quan đó
+    if (currentIds.includes('all')) {
+      currentIds = [agencyId];
+    } else {
+      if (currentIds.includes(agencyId)) {
+        currentIds = currentIds.filter(id => id !== agencyId);
+      } else {
+        currentIds.push(agencyId);
+      }
+    }
+
+    if (isEdit && editingCycle) {
+      setEditingCycle({ ...editingCycle, targetAgencyIds: currentIds });
+    } else {
+      setNewCycle({ ...newCycle, targetAgencyIds: currentIds });
+    }
+  };
+
+  const setAllTargets = (isEdit: boolean) => {
+    if (isEdit && editingCycle) setEditingCycle({ ...editingCycle, targetAgencyIds: ['all'] });
+    else setNewCycle({ ...newCycle, targetAgencyIds: ['all'] });
+  };
+
   const handleCreateCycle = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!newCycle.targetAgencyIds || newCycle.targetAgencyIds.length === 0) {
+      alert("Vui lòng chọn ít nhất một cơ quan hoặc 'Toàn hệ thống'");
+      return;
+    }
     setProcessing(true);
     try {
       await addDoc(collection(db, "cycles"), { ...newCycle, status: 'ACTIVE', createdAt: serverTimestamp() });
@@ -242,6 +274,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser }) => {
         name: '', 
         startDate: '', 
         endDate: '',
+        targetAgencyIds: ['all'],
         criteria: [
           { id: 'c1', name: 'HIỆU SUẤT', description: 'TIẾN ĐỘ VÀ CHẤT LƯỢNG HOÀN THÀNH NHIỆM VỤ', order: 0 },
           { id: 'c2', name: 'KỶ LUẬT', description: 'CHẤP HÀNH NỘI QUY VÀ GIỜ GIẤC TÁC PHONG', order: 1 },
@@ -261,6 +294,10 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser }) => {
   const handleUpdateCycle = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingCycle) return;
+    if (!editingCycle.targetAgencyIds || editingCycle.targetAgencyIds.length === 0) {
+      alert("Vui lòng chọn ít nhất một cơ quan hoặc 'Toàn hệ thống'");
+      return;
+    }
     setProcessing(true);
     try {
       const { id, ...updateData } = editingCycle;
@@ -350,6 +387,30 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser }) => {
                                    <input required type="date" value={editingCycle.endDate} onChange={e => setEditingCycle({...editingCycle, endDate: e.target.value})} className="bg-slate-50 border-2 border-slate-100 rounded-2xl px-6 py-4 text-xs font-bold" />
                                 </div>
                              </div>
+                             
+                             {/* EDIT TARGET AGENCIES */}
+                             <div className="space-y-3">
+                                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Phạm vi áp dụng</label>
+                                <div className="flex gap-4">
+                                   <button type="button" onClick={() => setAllTargets(true)} className={`px-4 py-2 rounded-xl text-[9px] font-black uppercase transition-all ${editingCycle.targetAgencyIds?.includes('all') ? 'bg-blue-600 text-white shadow-lg' : 'bg-slate-50 text-slate-500 border border-slate-200'}`}>Toàn hệ thống</button>
+                                   <button type="button" onClick={() => editingCycle.targetAgencyIds?.includes('all') && setEditingCycle({...editingCycle, targetAgencyIds: []})} className={`px-4 py-2 rounded-xl text-[9px] font-black uppercase transition-all ${!editingCycle.targetAgencyIds?.includes('all') ? 'bg-blue-600 text-white shadow-lg' : 'bg-slate-50 text-slate-500 border border-slate-200'}`}>Tùy chọn cơ quan</button>
+                                </div>
+                                {!editingCycle.targetAgencyIds?.includes('all') && (
+                                   <div className="grid grid-cols-2 gap-2 bg-slate-50 p-4 rounded-2xl border border-slate-100 max-h-48 overflow-y-auto custom-scrollbar">
+                                      {agencies.map(a => (
+                                        <label key={a.id} className="flex items-center gap-2 cursor-pointer p-2 hover:bg-white rounded-lg transition-colors">
+                                           <input 
+                                              type="checkbox" 
+                                              className="accent-blue-600 w-4 h-4"
+                                              checked={editingCycle.targetAgencyIds?.includes(a.id)}
+                                              onChange={() => toggleTargetAgency(a.id, true)}
+                                           />
+                                           <span className="text-[9px] font-bold text-slate-700 uppercase truncate">{a.name}</span>
+                                        </label>
+                                      ))}
+                                   </div>
+                                )}
+                             </div>
 
                              <div className="space-y-4">
                                 <div className="flex items-center justify-between">
@@ -417,6 +478,30 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser }) => {
                            <input required type="date" value={newCycle.endDate} onChange={e => setNewCycle({...newCycle, endDate: e.target.value})} className="bg-slate-50 border-2 border-slate-100 rounded-2xl px-6 py-4 text-xs font-bold" />
                         </div>
                      </div>
+                     
+                     {/* CREATE TARGET AGENCIES */}
+                     <div className="space-y-3">
+                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Phạm vi áp dụng</label>
+                        <div className="flex gap-4">
+                           <button type="button" onClick={() => setAllTargets(false)} className={`px-4 py-2 rounded-xl text-[9px] font-black uppercase transition-all ${newCycle.targetAgencyIds?.includes('all') ? 'bg-slate-900 text-white shadow-lg' : 'bg-slate-50 text-slate-500 border border-slate-200'}`}>Toàn hệ thống</button>
+                           <button type="button" onClick={() => newCycle.targetAgencyIds?.includes('all') && setNewCycle({...newCycle, targetAgencyIds: []})} className={`px-4 py-2 rounded-xl text-[9px] font-black uppercase transition-all ${!newCycle.targetAgencyIds?.includes('all') ? 'bg-slate-900 text-white shadow-lg' : 'bg-slate-50 text-slate-500 border border-slate-200'}`}>Tùy chọn cơ quan</button>
+                        </div>
+                        {!newCycle.targetAgencyIds?.includes('all') && (
+                           <div className="grid grid-cols-2 gap-2 bg-slate-50 p-4 rounded-2xl border border-slate-100 max-h-48 overflow-y-auto custom-scrollbar animate-fade-in-up">
+                              {agencies.map(a => (
+                                <label key={a.id} className="flex items-center gap-2 cursor-pointer p-2 hover:bg-white rounded-lg transition-colors">
+                                   <input 
+                                      type="checkbox" 
+                                      className="accent-slate-900 w-4 h-4"
+                                      checked={newCycle.targetAgencyIds?.includes(a.id)}
+                                      onChange={() => toggleTargetAgency(a.id, false)}
+                                   />
+                                   <span className="text-[9px] font-bold text-slate-700 uppercase truncate">{a.name}</span>
+                                </label>
+                              ))}
+                           </div>
+                        )}
+                     </div>
 
                      <div className="space-y-4">
                         <div className="flex items-center justify-between">
@@ -475,6 +560,20 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser }) => {
                         <div className="flex items-center gap-2 text-[8px] text-slate-400 font-bold uppercase tracking-widest">
                            <i className="far fa-calendar-alt"></i> {c.startDate} - {c.endDate}
                         </div>
+                        {c.targetAgencyIds && !c.targetAgencyIds.includes('all') && (
+                           <div className="mt-3 flex flex-wrap gap-1">
+                              {c.targetAgencyIds.slice(0, 3).map(aid => {
+                                 const ag = agencies.find(a => a.id === aid);
+                                 return ag ? <span key={aid} className="px-2 py-1 bg-slate-100 text-[7px] font-bold text-slate-500 uppercase rounded-md">{ag.name}</span> : null;
+                              })}
+                              {c.targetAgencyIds.length > 3 && <span className="px-2 py-1 bg-slate-100 text-[7px] font-bold text-slate-500 uppercase rounded-md">+{c.targetAgencyIds.length - 3}</span>}
+                           </div>
+                        )}
+                        {(!c.targetAgencyIds || c.targetAgencyIds.includes('all')) && (
+                           <div className="mt-3">
+                              <span className="px-2 py-1 bg-blue-50 text-[7px] font-bold text-blue-600 uppercase rounded-md">Toàn hệ thống</span>
+                           </div>
+                        )}
                      </div>
                      <div className="flex items-center justify-between border-t border-slate-50 pt-4">
                         <span className={`px-3 py-1 rounded-xl text-[8px] font-black uppercase ${c.status === 'ACTIVE' ? 'bg-emerald-50 text-emerald-600' : 'bg-slate-100 text-slate-400'}`}>
