@@ -24,7 +24,9 @@ const PublicBoard: React.FC<PublicBoardProps> = ({ user }) => {
   const [searchTerm, setSearchTerm] = useState('');
 
   const getAvatarUrl = (u: Partial<User>) => {
-    return u.avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(u.name || 'CB')}&background=1e293b&color=fff&bold=true`;
+    if (u.avatar && u.avatar.startsWith('data:image')) return u.avatar;
+    const name = u.name || 'CB';
+    return `https://ui-avatars.com/api/?name=${encodeURIComponent(name)}&background=1e293b&color=fff&bold=true&size=128`;
   };
 
   useEffect(() => {
@@ -70,13 +72,13 @@ const PublicBoard: React.FC<PublicBoardProps> = ({ user }) => {
       const sum = evs.reduce((acc, curr) => acc + (curr.scores[c.id] || 0), 0);
       const avg = Number((sum / evs.length).toFixed(1));
       sumOfAvgs += avg;
-      return { subject: c.name, A: avg };
+      return { subject: c.name, A: avg, fullMark: 100 };
     });
 
-    const overall = Number((sumOfAvgs / criteria.length).toFixed(1));
+    const overall = Number((sumOfAvgs / (criteria.length || 1)).toFixed(1));
     const rating = ratings.find(r => overall >= r.minScore) || ratings[ratings.length - 1] || { label: 'CHƯA XẾP LOẠI', color: '#94a3b8' };
 
-    return { avg: overall, ratingLabel: rating.label, ratingColor: rating.color, radarData };
+    return { avg: overall, ratingLabel: rating.label, ratingColor: rating.color, radarData, totalEvs: evs.length };
   };
 
   const filteredStaff = useMemo(() => {
@@ -89,240 +91,170 @@ const PublicBoard: React.FC<PublicBoardProps> = ({ user }) => {
     }).map(s => ({ ...s, stats: getStaffStats(s.id) }));
   }, [allUsers, selectedAgency, searchTerm, allEvaluations, selectedCycleId, selectedCycle]);
 
-  const ratingChartData = useMemo(() => {
-    if (!selectedCycle) return [];
-    return (selectedCycle.ratings || []).map(r => ({
-      name: r.label,
-      value: filteredStaff.filter(s => s.stats.ratingLabel === r.label).length,
-      color: r.color
-    }));
-  }, [filteredStaff, selectedCycle]);
+  const selectedStaff = useMemo(() => {
+    if (!selectedStaffId) return null;
+    return filteredStaff.find(s => s.id === selectedStaffId);
+  }, [filteredStaff, selectedStaffId]);
 
-  const handleExportRankingsExcel = () => {
-    if (filteredStaff.length === 0) return alert("KHÔNG CÓ DỮ LIỆU ĐỂ XUẤT");
-    
-    const cycleName = selectedCycle?.name || 'HỆ THỐNG';
-    const exportDate = new Date().toLocaleString('vi-VN');
-    const scope = selectedAgency === 'all' ? 'Toàn hệ thống' : (allAgencies.find(a => a.id === selectedAgency)?.name || 'Cơ quan riêng lẻ');
-
-    const styles = `
-      <style>
-        .report-header { font-size: 20pt; font-weight: bold; text-align: center; color: #1e3a8a; }
-        .sub-header { font-size: 11pt; text-align: center; color: #475569; }
-        table { border-collapse: collapse; width: 100%; margin-top: 20pt; }
-        th { background-color: #1e293b; color: #ffffff; border: 1pt solid #334155; padding: 10pt; text-transform: uppercase; font-size: 9pt; }
-        td { border: 1pt solid #e2e8f0; padding: 8pt; font-size: 10pt; }
-        .rank-top { background-color: #fefce8; font-weight: bold; color: #854d0e; }
-        .rank-normal { background-color: #ffffff; }
-        .score-cell { font-weight: bold; color: #1d4ed8; text-align: center; }
-        .rating-cell { font-weight: bold; text-align: center; color: #ffffff; }
-        .center { text-align: center; }
-      </style>
-    `;
-
-    const htmlContent = `
-      <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
-      <head><meta charset="utf-8" />${styles}</head>
-      <body>
-        <table>
-          <tr><td colspan="7" class="report-header">BẢNG DANH VỌNG CÁN BỘ - PHÚ THỌ RATE</td></tr>
-          <tr><td colspan="7" class="sub-header">Đợt đánh giá: ${cycleName} | Phạm vi: ${scope}</td></tr>
-          <tr><td colspan="7" class="center">Ngày trích xuất: ${exportDate}</td></tr>
-          <tr><td colspan="7"></td></tr>
-          <thead>
-            <tr>
-              <th>THỨ HẠNG</th>
-              <th>HỌ VÀ TÊN</th>
-              <th>ĐƠN VỊ CÔNG TÁC</th>
-              <th>CHỨC VỤ</th>
-              <th>PHÒNG BAN</th>
-              <th>ĐIỂM TRUNG BÌNH</th>
-              <th>XẾP LOẠI</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${filteredStaff.sort((a, b) => b.stats.avg - a.stats.avg).map((s, idx) => `
-              <tr class="${idx < 3 ? 'rank-top' : 'rank-normal'}">
-                <td class="center">#${idx + 1}</td>
-                <td>${s.name}</td>
-                <td>${allAgencies.find(a => a.id === s.agencyId)?.name || 'N/A'}</td>
-                <td>${s.position}</td>
-                <td>${s.department}</td>
-                <td class="score-cell">${s.stats.avg}</td>
-                <td class="center" style="background-color: ${s.stats.ratingColor}; color: #ffffff; font-weight: bold;">${s.stats.ratingLabel}</td>
-              </tr>
-            `).join('')}
-          </tbody>
-        </table>
-      </body>
-      </html>
-    `;
-
-    const blob = new Blob([htmlContent], { type: 'application/vnd.ms-excel' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.setAttribute("href", url);
-    link.setAttribute("download", `BANG_DANH_VONG_${cycleName.replace(/\s+/g, '_')}.xls`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-  };
-
-  if (loading) return <div className="p-20 text-center animate-pulse text-[10px] font-black uppercase text-slate-400">Đang tổng hợp dữ liệu danh vọng...</div>;
+  if (loading) return (
+    <div className="p-20 text-center animate-pulse">
+      <div className="w-12 h-12 bg-blue-100 rounded-2xl flex items-center justify-center mx-auto mb-4">
+        <i className="fas fa-chart-line animate-bounce text-blue-600"></i>
+      </div>
+      <p className="text-[10px] md:text-xs font-black uppercase text-slate-400 tracking-widest">Đang tổng hợp Bảng Danh Vọng...</p>
+    </div>
+  );
 
   return (
-    <div className="space-y-6 pb-24 animate-in fade-in duration-700">
-      <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
-        <div>
-          <h1 className="text-3xl font-black text-slate-900 uppercase tracking-tight">Bảng Danh Vọng</h1>
-          <p className="text-slate-400 font-medium text-[11px] uppercase tracking-wider">Dữ liệu công khai toàn hệ thống Phú Thọ Rate</p>
+    <div className="space-y-4 md:space-y-6 pb-24 animate-fade-in">
+      {/* Modal Chi tiết Cán bộ */}
+      {selectedStaff && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-md" onClick={() => setSelectedStaffId(null)}></div>
+          <div className="relative bg-white w-full max-w-2xl rounded-[2.5rem] shadow-2xl overflow-hidden animate-scale-in border border-slate-100 flex flex-col max-h-[90vh]">
+            <div className="bg-slate-900 p-8 text-white relative shrink-0">
+               <button onClick={() => setSelectedStaffId(null)} className="absolute top-6 right-6 w-10 h-10 flex items-center justify-center bg-white/10 rounded-xl hover:bg-white/20 transition-all active:scale-90"><i className="fas fa-times"></i></button>
+               <div className="flex items-center gap-6">
+                  <img src={getAvatarUrl(selectedStaff)} className="w-20 h-20 rounded-3xl object-cover border-4 border-white/10 shadow-lg" alt="" />
+                  <div>
+                     <h3 className="text-xl font-black uppercase tracking-tight leading-none mb-1">{selectedStaff.name}</h3>
+                     <p className="text-[10px] font-black text-blue-400 uppercase tracking-widest">{selectedStaff.position} | {selectedStaff.department}</p>
+                     <p className="text-[8px] text-white/40 font-bold uppercase mt-2">{allAgencies.find(a => a.id === selectedStaff.agencyId)?.name}</p>
+                  </div>
+               </div>
+            </div>
+
+            <div className="p-8 space-y-8 overflow-y-auto custom-scrollbar">
+               <div className="grid grid-cols-2 gap-6">
+                  <div className="bg-slate-50 p-6 rounded-[2rem] border border-slate-100 text-center">
+                     <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest mb-2">Điểm trung bình</p>
+                     <h4 className="text-4xl font-black text-slate-900 leading-none">{selectedStaff.stats.avg}</h4>
+                     <p className="text-[7px] text-slate-400 font-bold uppercase mt-2">Dựa trên {selectedStaff.stats.totalEvs} đánh giá</p>
+                  </div>
+                  <div className="p-6 rounded-[2rem] border flex flex-col items-center justify-center text-center" style={{ backgroundColor: `${selectedStaff.stats.ratingColor}10`, borderColor: `${selectedStaff.stats.ratingColor}20` }}>
+                     <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest mb-2">Xếp loại hiện tại</p>
+                     <h4 className="text-sm font-black uppercase leading-tight" style={{ color: selectedStaff.stats.ratingColor }}>{selectedStaff.stats.ratingLabel}</h4>
+                  </div>
+               </div>
+
+               <div className="bg-white p-4 rounded-[2.5rem] border border-slate-100 shadow-sm h-[300px]">
+                  <h5 className="text-[9px] font-black text-slate-400 uppercase tracking-[0.2em] mb-4 text-center">Biểu đồ năng lực đa chiều</h5>
+                  <ResponsiveContainer width="100%" height="90%">
+                    <RadarChart cx="50%" cy="50%" outerRadius="70%" data={selectedStaff.stats.radarData}>
+                      <PolarGrid stroke="#e2e8f0" />
+                      <PolarAngleAxis dataKey="subject" tick={{ fontSize: 8, fontWeight: 900, fill: '#94a3b8' }} />
+                      <PolarRadiusAxis angle={30} domain={[0, 100]} tick={{ fontSize: 7 }} />
+                      <Radar name={selectedStaff.name} dataKey="A" stroke="#2563eb" fill="#3b82f6" fillOpacity={0.5} />
+                    </RadarChart>
+                  </ResponsiveContainer>
+               </div>
+
+               <div className="space-y-3">
+                  <h5 className="text-[9px] font-black text-slate-900 uppercase border-l-4 border-blue-600 pl-3 tracking-widest">Chi tiết từng tiêu chí</h5>
+                  <div className="grid grid-cols-1 gap-2">
+                     {selectedStaff.stats.radarData.map((d: any, i: number) => (
+                        <div key={i} className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl border border-slate-100 hover:bg-white hover:border-blue-100 transition-all">
+                           <span className="text-[9px] font-black text-slate-500 uppercase">{d.subject}</span>
+                           <div className="flex items-center gap-3">
+                              <div className="w-24 h-1.5 bg-slate-200 rounded-full overflow-hidden">
+                                 <div className="h-full bg-blue-600 transition-all duration-1000" style={{ width: `${d.A}%` }}></div>
+                              </div>
+                              <span className="text-[11px] font-black text-slate-900">{d.A}</span>
+                           </div>
+                        </div>
+                     ))}
+                  </div>
+               </div>
+            </div>
+
+            <div className="p-6 bg-slate-50 border-t border-slate-100 shrink-0">
+               <button onClick={() => setSelectedStaffId(null)} className="w-full bg-slate-900 text-white py-4 rounded-2xl font-black text-[10px] uppercase tracking-[0.3em] hover:bg-blue-600 transition-all">Đóng thông tin</button>
+            </div>
+          </div>
         </div>
-        <div className="flex flex-wrap gap-3">
-           <button onClick={handleExportRankingsExcel} className="bg-emerald-600 text-white px-5 py-2.5 rounded-xl text-[9px] font-black uppercase flex items-center gap-2 hover:bg-slate-900 transition-all shadow-lg active:scale-95">
-              <i className="fas fa-file-excel"></i>
-              Tải bảng danh vọng chuyên nghiệp
-           </button>
-           <select value={selectedCycleId} onChange={e => setSelectedCycleId(e.target.value)} className="bg-white border border-slate-200 rounded-xl px-4 py-2.5 text-[10px] font-black uppercase shadow-sm appearance-none cursor-pointer min-w-[200px]">
+      )}
+
+      <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
+        <div className="text-center md:text-left">
+          <h1 className="text-2xl md:text-3xl font-black text-slate-900 uppercase tracking-tight leading-none">Bảng Danh Vọng</h1>
+          <p className="text-slate-400 font-medium text-[9px] md:text-[11px] uppercase tracking-wider mt-1">Vinh danh cán bộ xuất sắc</p>
+        </div>
+        <div className="flex flex-wrap gap-2 md:gap-3 justify-center md:justify-end">
+           <select value={selectedCycleId} onChange={e => setSelectedCycleId(e.target.value)} className="bg-white border border-slate-200 rounded-xl px-3 md:px-4 py-2 md:py-2.5 text-[9px] md:text-[10px] font-black uppercase shadow-sm outline-none cursor-pointer flex-1 md:flex-none transition-all hover:border-blue-400">
              {allCycles.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
            </select>
-           <select value={selectedAgency} onChange={e => setSelectedAgency(e.target.value)} className="bg-white border border-slate-200 rounded-xl px-4 py-2.5 text-[10px] font-black uppercase shadow-sm appearance-none cursor-pointer">
+           <select value={selectedAgency} onChange={e => setSelectedAgency(e.target.value)} className="bg-white border border-slate-200 rounded-xl px-3 md:px-4 py-2 md:py-2.5 text-[9px] md:text-[10px] font-black uppercase shadow-sm outline-none cursor-pointer flex-1 md:flex-none transition-all hover:border-blue-400">
              <option value="all">TẤT CẢ CƠ QUAN</option>
              {allAgencies.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
            </select>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div className="lg:col-span-2 bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm overflow-hidden min-h-[300px]">
-          <div className="h-full w-full relative min-h-0 min-w-0">
-            <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
-              <BarChart data={ratingChartData} margin={{ top: 20, right: 20, left: -20, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 8, fontWeight: 900, fill: '#94a3b8' }} />
-                <YAxis hide />
-                <ReTooltip cursor={{ fill: '#f8fafc' }} />
-                <Bar dataKey="value" radius={[10, 10, 0, 0]} barSize={40}>
-                  {ratingChartData.map((entry, index) => <Cell key={index} fill={entry.color} />)}
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
-        <div className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm flex flex-col items-center justify-center">
-           <div className="h-[180px] w-full relative">
-              <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
-                <PieChart>
-                  <Pie data={ratingChartData} innerRadius={50} outerRadius={70} paddingAngle={5} dataKey="value" stroke="none">
-                    {ratingChartData.map((entry, index) => <Cell key={index} fill={entry.color} />)}
-                  </Pie>
-                </PieChart>
-              </ResponsiveContainer>
-           </div>
-           <div className="w-full space-y-2 mt-4">
-              {ratingChartData.map((item, idx) => (
-                <div key={idx} className="flex items-center justify-between px-4 py-2 bg-slate-50 rounded-xl">
-                   <div className="flex items-center gap-2">
-                      <div className="w-2 h-2 rounded-full" style={{ backgroundColor: item.color }}></div>
-                      <span className="text-[8px] font-black text-slate-500 uppercase">{item.name}</span>
-                   </div>
-                   <span className="text-[10px] font-black text-slate-900">{item.value}</span>
-                </div>
-              ))}
-           </div>
-        </div>
-      </div>
-
-      <div className="bg-white rounded-[2rem] border border-slate-200 shadow-sm overflow-hidden">
-         <div className="p-6 border-b border-slate-50 flex items-center gap-4">
-            <div className="relative flex-1">
-               <i className="fas fa-search absolute left-4 top-1/2 -translate-y-1/2 text-slate-300"></i>
-               <input value={searchTerm} onChange={e => setSearchTerm(e.target.value)} className="w-full bg-slate-50 border border-slate-100 rounded-xl pl-10 pr-4 py-3 text-[10px] font-black uppercase shadow-inner outline-none focus:border-blue-400" placeholder="TÌM KIẾM CÁN BỘ ĐỊNH DANH..." />
+      <div className="bg-white rounded-[1.5rem] md:rounded-[2rem] border border-slate-200 shadow-sm overflow-hidden animate-fade-in-up">
+         <div className="p-4 md:p-6 border-b border-slate-50 bg-slate-50/20">
+            <div className="relative w-full group">
+               <i className="fas fa-search absolute left-4 top-1/2 -translate-y-1/2 text-slate-300 text-xs transition-colors group-focus-within:text-blue-500"></i>
+               <input value={searchTerm} onChange={e => setSearchTerm(e.target.value)} className="w-full bg-white border border-slate-200 rounded-xl pl-10 pr-4 py-2.5 md:py-3 text-[9px] md:text-[10px] font-black uppercase outline-none focus:border-blue-400 focus:shadow-lg focus:shadow-blue-500/5 transition-all" placeholder="TÌM KIẾM THEO TÊN CÁN BỘ..." />
             </div>
          </div>
-         <div className="overflow-x-auto">
-            <table className="w-full text-left">
-               <thead className="bg-slate-900 text-white text-[10px] font-black uppercase tracking-widest">
+         <div className="overflow-x-auto overflow-y-auto max-h-[600px] custom-scrollbar">
+            <table className="w-full text-left min-w-[600px]">
+               <thead className="bg-slate-900 text-white text-[8px] md:text-[10px] font-black uppercase tracking-[0.2em] sticky top-0 z-10">
                   <tr>
-                     <th className="px-8 py-6">Thứ hạng</th>
-                     <th className="px-8 py-6">Cán bộ</th>
-                     <th className="px-5 py-6 text-center">Điểm số</th>
-                     <th className="px-5 py-6 text-center">Xếp loại</th>
-                     <th className="px-8 py-6 text-right">Chi tiết</th>
+                     <th className="px-6 md:px-8 py-4 md:py-6">Hạng</th>
+                     <th className="px-6 md:px-8 py-4 md:py-6">Thông tin Cán bộ</th>
+                     <th className="px-4 md:px-5 py-4 md:py-6 text-center">Điểm số</th>
+                     <th className="px-4 md:px-5 py-4 md:py-6 text-center">Xếp loại</th>
+                     <th className="px-6 md:px-8 py-4 md:py-6 text-right">Chi tiết</th>
                   </tr>
                </thead>
                <tbody className="divide-y divide-slate-100">
                   {filteredStaff.sort((a, b) => b.stats.avg - a.stats.avg).map((staff, idx) => (
-                    <tr key={staff.id} className="hover:bg-slate-50 transition-colors">
-                       <td className="px-8 py-6">
-                          <span className={`text-sm font-black ${idx < 3 ? 'text-blue-600' : 'text-slate-400'}`}>#{idx + 1}</span>
+                    <tr key={staff.id} className="hover:bg-slate-50 transition-all group cursor-pointer" onClick={() => setSelectedStaffId(staff.id)}>
+                       <td className="px-6 md:px-8 py-4 md:py-6">
+                          <div className={`w-8 h-8 md:w-10 md:h-10 rounded-xl flex items-center justify-center text-xs md:text-sm font-black transition-all ${idx === 0 ? 'bg-amber-100 text-amber-600 ring-2 ring-amber-500/20' : idx === 1 ? 'bg-slate-100 text-slate-600' : idx === 2 ? 'bg-orange-50 text-orange-600' : 'text-slate-400'}`}>
+                             {idx + 1}
+                          </div>
                        </td>
-                       <td className="px-8 py-6">
-                          <div className="flex items-center gap-4">
-                             <img src={getAvatarUrl(staff)} className="w-12 h-12 rounded-xl object-cover shadow-sm border border-slate-200" />
-                             <div>
-                                <p className="text-[12px] font-black text-slate-900 uppercase leading-none mb-1">{staff.name}</p>
-                                <p className="text-[8px] font-bold text-slate-400 uppercase tracking-tighter">{staff.position} | {staff.department}</p>
+                       <td className="px-6 md:px-8 py-4 md:py-6">
+                          <div className="flex items-center gap-3 md:gap-4">
+                             <img src={getAvatarUrl(staff)} className="w-10 h-10 md:w-12 md:h-12 rounded-xl md:rounded-2xl object-cover border border-slate-200 shadow-sm" />
+                             <div className="min-w-0">
+                                <p className="text-[10px] md:text-[12px] font-black text-slate-900 uppercase truncate max-w-[120px] md:max-w-[200px] leading-tight group-hover:text-blue-600 transition-colors">{staff.name}</p>
+                                <p className="text-[7px] md:text-[8px] text-slate-400 font-bold uppercase truncate">{staff.department}</p>
                              </div>
                           </div>
                        </td>
-                       <td className="px-5 py-6 text-center">
-                          <span className="text-xl font-black text-slate-900">{staff.stats.avg}</span>
+                       <td className="px-4 md:px-5 py-4 md:py-6 text-center">
+                          <span className="text-base md:text-xl font-black text-slate-900 group-hover:scale-110 inline-block transition-transform">{staff.stats.avg}</span>
                        </td>
-                       <td className="px-5 py-6 text-center">
-                          <div className="inline-flex px-4 py-2 rounded-xl text-[9px] font-black uppercase tracking-widest border shadow-sm" style={{ backgroundColor: `${staff.stats.ratingColor}15`, color: staff.stats.ratingColor, borderColor: `${staff.stats.ratingColor}30` }}>
+                       <td className="px-4 md:px-5 py-4 md:py-6 text-center">
+                          <div className="inline-flex px-2 md:px-3 py-1 md:py-1.5 rounded-lg md:rounded-xl text-[7px] md:text-[8px] font-black uppercase tracking-widest border transition-all group-hover:shadow-md" style={{ backgroundColor: `${staff.stats.ratingColor}15`, color: staff.stats.ratingColor, borderColor: `${staff.stats.ratingColor}30` }}>
                              {staff.stats.ratingLabel}
                           </div>
                        </td>
-                       <td className="px-8 py-6 text-right">
-                          <button onClick={() => setSelectedStaffId(staff.id)} className="w-10 h-10 bg-slate-100 rounded-xl text-slate-400 hover:bg-slate-900 hover:text-white transition-all">
-                             <i className="fas fa-chevron-right text-xs"></i>
+                       <td className="px-6 md:px-8 py-4 md:py-6 text-right">
+                          <button 
+                            onClick={(e) => { e.stopPropagation(); setSelectedStaffId(staff.id); }} 
+                            className="w-8 h-8 md:w-10 md:h-10 bg-white border border-slate-200 rounded-xl text-slate-400 hover:bg-blue-600 hover:text-white hover:border-blue-600 transition-all shadow-sm group-hover:translate-x-1"
+                          >
+                             <i className="fas fa-chevron-right text-[10px]"></i>
                           </button>
                        </td>
                     </tr>
                   ))}
+                  {filteredStaff.length === 0 && (
+                    <tr>
+                      <td colSpan={5} className="py-20 text-center">
+                        <div className="w-12 h-12 bg-slate-50 rounded-full flex items-center justify-center mx-auto mb-3 text-slate-200"><i className="fas fa-users-slash text-xl"></i></div>
+                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Không tìm thấy cán bộ phù hợp</p>
+                      </td>
+                    </tr>
+                  )}
                </tbody>
             </table>
          </div>
       </div>
-
-      {selectedStaffId && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
-           <div className="absolute inset-0 bg-slate-900/80 backdrop-blur-md" onClick={() => setSelectedStaffId(null)}></div>
-           <div className="relative bg-white w-full max-w-2xl rounded-[3rem] shadow-2xl p-8 md:p-12 overflow-hidden animate-in zoom-in-95">
-              {(() => {
-                const s = filteredStaff.find(u => u.id === selectedStaffId);
-                if (!s) return null;
-                return (
-                  <div className="space-y-10">
-                    <div className="flex items-center gap-6">
-                       <img src={getAvatarUrl(s)} className="w-24 h-24 rounded-[2rem] object-cover border-4 border-slate-50 shadow-xl" />
-                       <div>
-                          <h3 className="text-2xl font-black text-slate-900 uppercase tracking-tight leading-none mb-2">{s.name}</h3>
-                          <div className="flex flex-wrap gap-2">
-                             <span className="text-[9px] font-black bg-blue-50 text-blue-600 px-3 py-1 rounded-lg uppercase">{s.position}</span>
-                             <span className="text-[9px] font-black bg-emerald-50 text-emerald-600 px-3 py-1 rounded-lg uppercase">{s.department}</span>
-                          </div>
-                       </div>
-                    </div>
-                    
-                    <div className="h-64 relative min-h-0 min-w-0">
-                       <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
-                          <RadarChart cx="50%" cy="50%" outerRadius="80%" data={s.stats.radarData}>
-                             <PolarGrid stroke="#e2e8f0" />
-                             <PolarAngleAxis dataKey="subject" tick={{fontSize: 8, fontWeight: 900, fill: '#94a3b8'}} />
-                             <PolarRadiusAxis angle={30} domain={[0, 10]} tick={false} axisLine={false} />
-                             <Radar name="Cán bộ" dataKey="A" stroke={s.stats.ratingColor} fill={s.stats.ratingColor} fillOpacity={0.4} />
-                          </RadarChart>
-                       </ResponsiveContainer>
-                    </div>
-
-                    <button onClick={() => setSelectedStaffId(null)} className="w-full bg-slate-900 text-white py-5 rounded-3xl font-black text-[10px] uppercase tracking-widest shadow-xl shadow-slate-900/10 active:scale-95 transition-all">Đóng hồ sơ</button>
-                  </div>
-                );
-              })()}
-           </div>
-        </div>
-      )}
     </div>
   );
 };
