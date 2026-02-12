@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { db } from '../firebase';
-import { collection, getDocs, addDoc, doc, updateDoc, serverTimestamp, query, orderBy, deleteDoc } from 'firebase/firestore';
+import { collection, getDocs, addDoc, doc, updateDoc, serverTimestamp, query, orderBy, deleteDoc, writeBatch } from 'firebase/firestore';
 import { User, Agency, EvaluationCycle, Criterion, RatingConfig } from '../types';
 
 interface AdminPanelProps { currentUser: User; }
@@ -13,6 +13,9 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser }) => {
   const [cycles, setCycles] = useState<EvaluationCycle[]>([]);
   const [loading, setLoading] = useState(true);
   const [processing, setProcessing] = useState(false);
+
+  // State cho việc chỉnh sửa
+  const [editingCycle, setEditingCycle] = useState<EvaluationCycle | null>(null);
 
   const [newCycle, setNewCycle] = useState<Omit<EvaluationCycle, 'id' | 'status'>>({
     name: '',
@@ -65,24 +68,6 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser }) => {
     } finally { setProcessing(false); }
   };
 
-  const handleDeleteCycle = async (cycle: EvaluationCycle) => {
-    if (window.confirm(`CẢNH BÁO: XÓA VĨNH VIỄN ĐỢT: ${cycle.name}?\nHành động này không thể hoàn tác.`)) {
-      setProcessing(true);
-      try {
-        await deleteDoc(doc(db, "cycles", cycle.id));
-        alert("ĐÃ XÓA ĐỢT ĐÁNH GIÁ THÀNH CÔNG.");
-        await fetchData();
-      } catch (err: any) { 
-        console.error(err); 
-        if (err.code === 'permission-denied') {
-          alert("LỖI QUYỀN TRUY CẬP: BẠN KHÔNG CÓ QUYỀN XÓA DỮ LIỆU NÀY.");
-        } else {
-          alert("LỖI HỆ THỐNG KHI XÓA.");
-        }
-      } finally { setProcessing(false); }
-    }
-  };
-
   const handleDeleteUser = async (userToDelete: User) => {
     if (userToDelete.id === currentUser.id) {
       alert("BẠN KHÔNG THỂ TỰ XÓA TÀI KHOẢN ĐANG SỬ DỤNG.");
@@ -97,11 +82,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser }) => {
         await fetchData();
       } catch (err: any) { 
         console.error(err); 
-        if (err.code === 'permission-denied') {
-          alert("LỖI QUYỀN TRUY CẬP: BẠN KHÔNG CÓ QUYỀN XÓA NGƯỜI DÙNG.");
-        } else {
-          alert("LỖI KHI XÓA TÀI KHOẢN.");
-        }
+        alert("LỖI KHI XÓA: " + err.message);
       } finally { setProcessing(false); }
     }
   };
@@ -128,6 +109,29 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser }) => {
     finally { setProcessing(false); }
   };
 
+  // --- LOGIC CẬP NHẬT (EDIT) ---
+  const handleUpdateCycle = async (e: React.FormEvent) => {
+      e.preventDefault();
+      if (!editingCycle) return;
+      
+      setProcessing(true);
+      try {
+          const cycleRef = doc(db, "cycles", editingCycle.id);
+          // Loại bỏ field id ra khỏi object trước khi update
+          const { id, ...updateData } = editingCycle;
+          await updateDoc(cycleRef, updateData);
+          alert("ĐÃ CẬP NHẬT THÔNG TIN ĐỢT ĐÁNH GIÁ!");
+          setEditingCycle(null);
+          fetchData();
+      } catch (err: any) {
+          console.error(err);
+          alert("LỖI CẬP NHẬT: " + err.message);
+      } finally {
+          setProcessing(false);
+      }
+  };
+
+  // --- LOGIC HELPER CHO FORM TẠO MỚI ---
   const updateCriterion = (id: string, field: keyof Criterion, value: string) => {
     setNewCycle(prev => ({
       ...prev,
@@ -142,7 +146,6 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser }) => {
     if (newCycle.criteria.length <= 1) return;
     setNewCycle(prev => ({ ...prev, criteria: prev.criteria.filter(c => c.id !== id) }));
   };
-
   const updateRatingValue = (id: string, field: keyof RatingConfig, value: any) => {
     setNewCycle(prev => {
       const updated = prev.ratings.map(r => r.id === id ? { ...r, [field]: field === 'label' ? value.toUpperCase() : value } : r);
@@ -160,32 +163,71 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser }) => {
     if (newCycle.ratings.length <= 1) return;
     setNewCycle(prev => ({ ...prev, ratings: prev.ratings.filter(r => r.id !== id) }));
   };
-
-  // Helper function để xử lý chọn cơ quan
   const toggleAgencySelection = (agencyId: string) => {
     setNewCycle(prev => {
         let currentIds = [...prev.targetAgencyIds];
-        
         if (agencyId === 'all') {
-            // Nếu chọn "Toàn hệ thống", xóa hết các cái khác và chỉ giữ 'all'
             return { ...prev, targetAgencyIds: ['all'] };
         } else {
-            // Nếu chọn một cơ quan cụ thể
-            if (currentIds.includes('all')) {
-                // Nếu đang là 'all', bỏ 'all' và chọn cơ quan này
-                currentIds = [agencyId];
-            } else {
-                // Toggle cơ quan
-                if (currentIds.includes(agencyId)) {
-                    currentIds = currentIds.filter(id => id !== agencyId);
-                } else {
-                    currentIds.push(agencyId);
-                }
-            }
+            if (currentIds.includes('all')) currentIds = [agencyId];
+            else if (currentIds.includes(agencyId)) currentIds = currentIds.filter(id => id !== agencyId);
+            else currentIds.push(agencyId);
             return { ...prev, targetAgencyIds: currentIds };
         }
     });
   };
+
+  // --- LOGIC HELPER CHO FORM CHỈNH SỬA (EDIT) ---
+  const toggleEditAgency = (agencyId: string) => {
+      if (!editingCycle) return;
+      setEditingCycle(prev => {
+          if(!prev) return null;
+          let currentIds = [...(prev.targetAgencyIds || [])];
+          if (agencyId === 'all') {
+              return { ...prev, targetAgencyIds: ['all'] };
+          } else {
+              if (currentIds.includes('all')) currentIds = [agencyId];
+              else if (currentIds.includes(agencyId)) currentIds = currentIds.filter(id => id !== agencyId);
+              else currentIds.push(agencyId);
+              return { ...prev, targetAgencyIds: currentIds };
+          }
+      });
+  };
+  const updateEditCriterion = (id: string, field: keyof Criterion, value: string) => {
+      setEditingCycle(prev => prev ? ({
+          ...prev,
+          criteria: prev.criteria.map(c => c.id === id ? { ...c, [field]: value.toUpperCase() } : c)
+      }) : null);
+  };
+  const addEditCriterion = () => {
+    setEditingCycle(prev => {
+        if(!prev) return null;
+        const newCrit: Criterion = { id: `crit_edit_${Date.now()}`, name: 'TIÊU CHÍ', description: 'MÔ TẢ', order: prev.criteria.length };
+        return { ...prev, criteria: [...prev.criteria, newCrit] };
+    });
+  };
+  const removeEditCriterion = (id: string) => {
+    setEditingCycle(prev => prev ? ({ ...prev, criteria: prev.criteria.filter(c => c.id !== id) }) : null);
+  };
+  const updateEditRating = (id: string, field: keyof RatingConfig, value: any) => {
+      setEditingCycle(prev => {
+          if(!prev) return null;
+          const updated = prev.ratings.map(r => r.id === id ? { ...r, [field]: field === 'label' ? value.toUpperCase() : value } : r);
+          if (field === 'minScore') updated.sort((a, b) => b.minScore - a.minScore);
+          return { ...prev, ratings: updated };
+      });
+  };
+  const addEditRating = () => {
+      setEditingCycle(prev => {
+          if(!prev) return null;
+          const newRate: RatingConfig = { id: `rate_edit_${Date.now()}`, label: 'XẾP LOẠI', minScore: 0, color: '#64748b', order: prev.ratings.length };
+          return { ...prev, ratings: [...prev.ratings, newRate].sort((a, b) => b.minScore - a.minScore) };
+      });
+  };
+  const removeEditRating = (id: string) => {
+      setEditingCycle(prev => prev ? ({ ...prev, ratings: prev.ratings.filter(r => r.id !== id) }) : null);
+  };
+
 
   if (loading) return <div className="p-20 text-center animate-pulse text-[10px] font-black uppercase text-slate-400 tracking-widest">Đang kết nối hệ thống...</div>;
 
@@ -198,6 +240,103 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser }) => {
               <span className="text-[10px] font-black uppercase tracking-widest">Đang cập nhật dữ liệu...</span>
            </div>
         </div>
+      )}
+
+      {/* MODAL CHỈNH SỬA ĐỢT ĐÁNH GIÁ */}
+      {editingCycle && (
+         <div className="fixed inset-0 z-[150] bg-slate-900/80 backdrop-blur-sm flex items-center justify-center p-4">
+            <div className="bg-white w-full max-w-4xl max-h-[90vh] rounded-[2.5rem] shadow-2xl overflow-hidden flex flex-col animate-in zoom-in-95">
+                <div className="bg-slate-50 px-8 py-6 border-b border-slate-100 flex items-center justify-between shrink-0">
+                    <div>
+                        <h3 className="text-lg font-black text-slate-900 uppercase">Cập nhật đợt đánh giá</h3>
+                        <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">ID: {editingCycle.id}</p>
+                    </div>
+                    <button onClick={() => setEditingCycle(null)} className="w-10 h-10 flex items-center justify-center bg-white rounded-xl shadow-sm hover:text-rose-600 transition-colors"><i className="fas fa-times"></i></button>
+                </div>
+                
+                <div className="overflow-y-auto p-8 space-y-10 custom-scrollbar">
+                     <form id="edit-cycle-form" onSubmit={handleUpdateCycle} className="space-y-10">
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                             <div className="space-y-2 md:col-span-2">
+                                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Tên đợt</label>
+                                <input required value={editingCycle.name} onChange={e => setEditingCycle({...editingCycle, name: e.target.value.toUpperCase()})} className="w-full bg-slate-50 border-2 border-slate-100 rounded-2xl px-6 py-4 text-sm font-black uppercase focus:border-blue-500 outline-none transition-all" />
+                             </div>
+                             <div className="space-y-2">
+                                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Từ ngày</label>
+                                  <input required type="date" value={editingCycle.startDate} onChange={e => setEditingCycle({...editingCycle, startDate: e.target.value})} className="w-full bg-slate-50 border-2 border-slate-100 rounded-2xl px-4 py-3.5 text-xs font-bold" />
+                             </div>
+                             <div className="space-y-2">
+                                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Đến ngày</label>
+                                  <input required type="date" value={editingCycle.endDate} onChange={e => setEditingCycle({...editingCycle, endDate: e.target.value})} className="w-full bg-slate-50 border-2 border-slate-100 rounded-2xl px-4 py-3.5 text-xs font-bold" />
+                             </div>
+                        </div>
+
+                        <div className="space-y-3">
+                            <label className="text-[11px] font-black text-slate-500 uppercase tracking-widest border-l-2 border-slate-300 pl-2">Phạm vi áp dụng</label>
+                            <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100 max-h-[200px] overflow-y-auto custom-scrollbar">
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                    <label className={`flex items-center gap-3 p-3 rounded-xl border cursor-pointer ${editingCycle.targetAgencyIds?.includes('all') ? 'bg-blue-600 border-blue-600 text-white' : 'bg-white border-slate-200 text-slate-600'}`}>
+                                        <input type="checkbox" className="hidden" checked={editingCycle.targetAgencyIds?.includes('all')} onChange={() => toggleEditAgency('all')} />
+                                        <span className="text-[10px] font-black uppercase">Toàn hệ thống (Tất cả)</span>
+                                    </label>
+                                    {agencies.map(agency => (
+                                        <label key={agency.id} className={`flex items-center gap-3 p-3 rounded-xl border cursor-pointer ${editingCycle.targetAgencyIds?.includes(agency.id) ? 'bg-white border-blue-500 shadow-md ring-1 ring-blue-500' : 'bg-white border-slate-200'}`}>
+                                            <div className={`w-4 h-4 rounded border flex items-center justify-center ${editingCycle.targetAgencyIds?.includes(agency.id) ? 'bg-blue-500 border-blue-500' : 'border-slate-300'}`}>
+                                                {editingCycle.targetAgencyIds?.includes(agency.id) && <i className="fas fa-check text-[8px] text-white"></i>}
+                                            </div>
+                                            <input type="checkbox" className="hidden" checked={editingCycle.targetAgencyIds?.includes(agency.id) || false} onChange={() => toggleEditAgency(agency.id)} />
+                                            <span className={`text-[10px] font-black uppercase truncate ${editingCycle.targetAgencyIds?.includes(agency.id) ? 'text-blue-700' : 'text-slate-700'}`}>{agency.name}</span>
+                                        </label>
+                                    ))}
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="space-y-4">
+                             <div className="flex items-center justify-between">
+                                <label className="text-[11px] font-black text-blue-600 uppercase tracking-widest">Bộ tiêu chí</label>
+                                <button type="button" onClick={addEditCriterion} className="text-[9px] font-black uppercase text-blue-600 hover:underline">+ Thêm</button>
+                             </div>
+                             <div className="grid grid-cols-1 gap-3">
+                                {editingCycle.criteria?.map((c) => (
+                                  <div key={c.id} className="bg-slate-50 p-3 rounded-xl border border-slate-100 flex gap-3">
+                                     <div className="flex-1 space-y-2">
+                                         <input value={c.name} onChange={e => updateEditCriterion(c.id, 'name', e.target.value)} className="w-full bg-white border border-slate-200 px-3 py-2 rounded-lg text-[10px] font-black uppercase" placeholder="Tên tiêu chí" />
+                                         <input value={c.description} onChange={e => updateEditCriterion(c.id, 'description', e.target.value)} className="w-full bg-white border border-slate-200 px-3 py-2 rounded-lg text-[9px] uppercase" placeholder="Mô tả" />
+                                     </div>
+                                     <button type="button" onClick={() => removeEditCriterion(c.id)} className="w-8 flex items-center justify-center text-rose-500 hover:bg-rose-50 rounded-lg"><i className="fas fa-trash-alt"></i></button>
+                                  </div>
+                                ))}
+                             </div>
+                        </div>
+
+                        <div className="space-y-4">
+                             <div className="flex items-center justify-between">
+                                <label className="text-[11px] font-black text-emerald-600 uppercase tracking-widest">Thang điểm</label>
+                                <button type="button" onClick={addEditRating} className="text-[9px] font-black uppercase text-emerald-600 hover:underline">+ Thêm</button>
+                             </div>
+                             <div className="grid grid-cols-1 gap-3">
+                                {editingCycle.ratings?.map((r) => (
+                                  <div key={r.id} className="flex items-center gap-3 bg-slate-50 p-3 rounded-xl border border-slate-100">
+                                     <input type="color" value={r.color} onChange={e => updateEditRating(r.id, 'color', e.target.value)} className="w-6 h-6 rounded border-none p-0 cursor-pointer" />
+                                     <input value={r.label} onChange={e => updateEditRating(r.id, 'label', e.target.value)} className="flex-1 bg-white border border-slate-200 px-3 py-2 rounded-lg text-[10px] font-black uppercase" />
+                                     <input type="number" step="0.1" value={r.minScore} onChange={e => updateEditRating(r.id, 'minScore', parseFloat(e.target.value))} className="w-16 bg-white border border-slate-200 px-2 py-2 rounded-lg text-[10px] font-black text-center" />
+                                     <button type="button" onClick={() => removeEditRating(r.id)} className="w-8 flex items-center justify-center text-rose-500 hover:bg-rose-50 rounded-lg"><i className="fas fa-trash-alt"></i></button>
+                                  </div>
+                                ))}
+                             </div>
+                        </div>
+                     </form>
+                </div>
+
+                <div className="bg-slate-50 px-8 py-6 border-t border-slate-100 flex gap-4 shrink-0">
+                    <button onClick={() => setEditingCycle(null)} className="flex-1 py-4 bg-white border border-slate-200 text-slate-600 rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-slate-100 transition-all">Hủy bỏ</button>
+                    <button type="submit" form="edit-cycle-form" disabled={processing} className="flex-1 py-4 bg-blue-600 text-white rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-blue-700 shadow-xl shadow-blue-500/20 transition-all">
+                        {processing ? 'Đang lưu...' : 'Lưu thay đổi'}
+                    </button>
+                </div>
+            </div>
+         </div>
       )}
 
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -326,11 +465,16 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser }) => {
                 {cycles.map(c => (
                   <div key={c.id} className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm group">
                      <div className="flex items-start justify-between mb-4">
-                        <div className="min-w-0">
-                           <h4 className="text-[11px] font-black text-slate-900 uppercase truncate">{c.name}</h4>
+                        <div className="min-w-0 flex-1 pr-2">
+                           <div className="flex items-center gap-2 mb-1">
+                               <h4 className="text-[11px] font-black text-slate-900 uppercase truncate">{c.name}</h4>
+                               <button onClick={() => setEditingCycle(c)} className="text-[8px] font-black text-blue-600 bg-blue-50 px-2 py-0.5 rounded hover:bg-blue-100 transition-colors uppercase shrink-0"><i className="fas fa-edit mr-1"></i>Sửa</button>
+                           </div>
                            <p className="text-[8px] text-slate-400 font-bold uppercase mt-1">{c.startDate} → {c.endDate}</p>
-                           <p className="text-[8px] text-blue-500 font-bold uppercase mt-1">
-                              Phạm vi: {c.targetAgencyIds?.includes('all') ? 'TOÀN HỆ THỐNG' : `${c.targetAgencyIds?.length || 0} CƠ QUAN`}
+                           <p className="text-[8px] text-blue-500 font-bold uppercase mt-2 leading-relaxed">
+                              Phạm vi: {c.targetAgencyIds?.includes('all') 
+                                ? 'TOÀN HỆ THỐNG' 
+                                : c.targetAgencyIds?.map(id => agencies.find(a => a.id === id)?.name).filter(Boolean).join(', ')}
                            </p>
                         </div>
                         <div className="shrink-0">
@@ -339,20 +483,14 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser }) => {
                           {c.status === 'CLOSED' && <span className="px-2 py-1 rounded-lg text-[7px] font-black bg-rose-50 text-rose-600 uppercase">Đã đóng</span>}
                         </div>
                      </div>
-                     <div className="grid grid-cols-2 gap-2">
+                     <div className="mt-3">
                         {c.status === 'PAUSED' ? (
-                          <button onClick={() => updateStatus(c.id, 'ACTIVE')} className="bg-emerald-50 text-emerald-600 py-2.5 rounded-xl text-[8px] font-black uppercase hover:bg-emerald-600 hover:text-white transition-all">Mở lại</button>
+                          <button onClick={() => updateStatus(c.id, 'ACTIVE')} className="w-full bg-emerald-50 text-emerald-600 py-3 rounded-xl text-[9px] font-black uppercase hover:bg-emerald-600 hover:text-white transition-all">Mở lại hoạt động</button>
                         ) : c.status === 'ACTIVE' ? (
-                          <button onClick={() => updateStatus(c.id, 'PAUSED')} className="bg-amber-50 text-amber-600 py-2.5 rounded-xl text-[8px] font-black uppercase hover:bg-amber-600 hover:text-white transition-all">Tạm dừng</button>
-                        ) : null}
-                        
-                        {c.status !== 'CLOSED' && (
-                          <button onClick={() => updateStatus(c.id, 'CLOSED')} className="bg-slate-50 text-slate-400 py-2.5 rounded-xl text-[8px] font-black uppercase hover:bg-rose-50 hover:text-rose-600 transition-all">Kết thúc</button>
+                          <button onClick={() => updateStatus(c.id, 'PAUSED')} className="w-full bg-amber-50 text-amber-600 py-3 rounded-xl text-[9px] font-black uppercase hover:bg-amber-600 hover:text-white transition-all">Tạm dừng đánh giá</button>
+                        ) : (
+                          <div className="w-full bg-slate-50 text-slate-400 py-3 rounded-xl text-[9px] font-black uppercase text-center border border-slate-100">Đã đóng</div>
                         )}
-                        
-                        <button onClick={() => handleDeleteCycle(c)} className="col-span-2 mt-2 py-3 bg-rose-50 text-rose-600 rounded-xl text-[8px] font-black uppercase hover:bg-rose-600 hover:text-white transition-all flex items-center justify-center gap-2">
-                           <i className="fas fa-trash-alt"></i> Xóa vĩnh viễn đợt
-                        </button>
                      </div>
                   </div>
                 ))}
