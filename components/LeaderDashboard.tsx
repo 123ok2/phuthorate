@@ -1,12 +1,8 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
-import { User, Agency, Evaluation, EvaluationCriteria, EvaluationCycle } from '../types';
+import { User, Agency, Evaluation, EvaluationScores, EvaluationCycle } from '../types';
 import { db } from '../firebase';
 import { collection, getDocs, query, where } from 'firebase/firestore';
-import { 
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, 
-  Radar, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis 
-} from 'recharts';
 
 interface LeaderDashboardProps { user: User; }
 
@@ -18,180 +14,213 @@ const LeaderDashboard: React.FC<LeaderDashboardProps> = ({ user }) => {
   const [allCycles, setAllCycles] = useState<EvaluationCycle[]>([]);
   const [selectedCycleId, setSelectedCycleId] = useState<string>('all');
   const [loading, setLoading] = useState(true);
-
-  const getAvatarUrl = (u: Partial<User>) => {
-    return u.avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(u.name || 'CB')}&background=3b82f6&color=fff&bold=true`;
-  };
+  const [onlyIncomplete, setOnlyIncomplete] = useState(false);
 
   useEffect(() => {
     const fetchData = async () => {
       setLoading(true);
       try {
-        const [agencySnap, cycleSnap] = await Promise.all([
+        const [agencySnap, cycleSnap, evalSnap] = await Promise.all([
           getDocs(collection(db, "agencies")),
-          getDocs(collection(db, "cycles"))
+          getDocs(collection(db, "cycles")),
+          getDocs(collection(db, "evaluations"))
         ]);
         
         const agencyList = agencySnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Agency));
         setAgencies(agencyList);
-        
         const cyclesData = cycleSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as EvaluationCycle));
         setAllCycles(cyclesData);
-        const activeCycle = cyclesData.find(c => c.status === 'ACTIVE');
-        if (activeCycle) setSelectedCycleId(activeCycle.id);
-
-        const staffQuery = query(collection(db, "users"), where("agencyId", "==", selectedAgencyId || user.agencyId));
-        const staffSnap = await getDocs(staffQuery);
-        const staffList = staffSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as User));
-        setAgencyStaff(staffList);
         
-        const evalSnap = await getDocs(collection(db, "evaluations"));
+        const activeCycle = cyclesData.find(c => c.status === 'ACTIVE');
+        if (activeCycle && selectedCycleId === 'all') setSelectedCycleId(activeCycle.id);
+
+        const staffQuery = query(collection(db, "users"), where("agencyId", "==", selectedAgencyId));
+        const staffSnap = await getDocs(staffQuery);
+        setAgencyStaff(staffSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as User)));
         setAllEvaluations(evalSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Evaluation)));
       } catch (error) { console.error(error); }
-      setLoading(false);
+      finally { setLoading(false); }
     };
     fetchData();
-  }, [selectedAgencyId, user.agencyId]);
+  }, [selectedAgencyId]);
 
-  const filteredEvaluations = useMemo(() => {
-    return allEvaluations.filter(ev => {
-      const matchCycle = selectedCycleId === 'all' || ev.cycleId === selectedCycleId;
-      const matchStaff = agencyStaff.some(s => s.id === ev.evaluateeId);
-      return matchCycle && matchStaff;
-    });
-  }, [allEvaluations, selectedCycleId, agencyStaff]);
+  const selectedCycle = useMemo(() => allCycles.find(c => c.id === selectedCycleId), [allCycles, selectedCycleId]);
 
-  const analytics = useMemo(() => {
-    if (agencyStaff.length === 0) return { completionRate: "0", avgScore: "0", radarData: [], totalStaff: 0, totalEvals: 0 };
+  const progressReport = useMemo(() => {
+    if (!selectedCycle) return [];
+    const activeStaff = agencyStaff.filter(s => s.role !== 'ADMIN');
     
-    const evaluatedStaffIds = new Set(filteredEvaluations.map(e => e.evaluateeId));
-    const criteriaSum: EvaluationCriteria = { professionalism: 0, productivity: 0, collaboration: 0, innovation: 0, discipline: 0 };
-    
-    filteredEvaluations.forEach(e => {
-      criteriaSum.professionalism += e.scores.professionalism;
-      criteriaSum.productivity += e.scores.productivity;
-      criteriaSum.collaboration += e.scores.collaboration;
-      criteriaSum.innovation += e.scores.innovation;
-      criteriaSum.discipline += e.scores.discipline;
-    });
+    let report = activeStaff.map(evaluator => {
+      const targetPeers = activeStaff.filter(p => p.id !== evaluator.id);
+      const doneIds = allEvaluations
+        .filter(e => e.evaluatorId === evaluator.id && e.cycleId === selectedCycleId)
+        .map(e => e.evaluateeId);
+      
+      const missingPeers = targetPeers.filter(p => !doneIds.includes(p.id));
+      
+      return {
+        evaluator,
+        totalRequired: targetPeers.length,
+        doneCount: doneIds.length,
+        missingCount: missingPeers.length,
+        missingNames: missingPeers.map(p => p.name),
+        isComplete: missingPeers.length === 0,
+        percent: targetPeers.length > 0 ? Math.round((doneIds.length / targetPeers.length) * 100) : 100
+      };
+    }).sort((a, b) => a.percent - b.percent);
 
-    const count = filteredEvaluations.length || 1;
-    const radarData = [
-      { subject: 'Chuyên môn', A: Number((criteriaSum.professionalism / count).toFixed(1)) },
-      { subject: 'Hiệu suất', A: Number((criteriaSum.productivity / count).toFixed(1)) },
-      { subject: 'Hợp tác', A: Number((criteriaSum.collaboration / count).toFixed(1)) },
-      { subject: 'Đổi mới', A: Number((criteriaSum.innovation / count).toFixed(1)) },
-      { subject: 'Kỷ luật', A: Number((criteriaSum.discipline / count).toFixed(1)) },
-    ];
+    if (onlyIncomplete) {
+      report = report.filter(r => !r.isComplete);
+    }
+    return report;
+  }, [agencyStaff, allEvaluations, selectedCycleId, selectedCycle, onlyIncomplete]);
 
-    return {
-      completionRate: ((evaluatedStaffIds.size / agencyStaff.length) * 100).toFixed(0),
-      avgScore: (radarData.reduce((sum, r) => sum + r.A, 0) / 5).toFixed(1),
-      radarData, 
-      totalStaff: agencyStaff.length, 
-      totalEvals: filteredEvaluations.length
-    };
-  }, [agencyStaff, filteredEvaluations]);
+  const lazyStaff = useMemo(() => progressReport.filter(p => p.percent === 0), [progressReport]);
 
-  if (loading) return <div className="p-20 text-center text-[10px] font-black uppercase tracking-widest animate-pulse">Đang nạp dữ liệu phân tích...</div>;
+  const handleCopyReminder = (p: any) => {
+    const text = `[NHẮC NHỞ ĐÁNH GIÁ]\nKính gửi đồng chí: ${p.evaluator.name}\nHiện tại đợt "${selectedCycle?.name}" đang diễn ra. Đồng chí vẫn còn thiếu ${p.missingCount}/${p.totalRequired} lượt đánh giá cho các đồng nghiệp: ${p.missingNames.join(', ')}.\nVui lòng truy cập hệ thống Phú Thọ Rate để hoàn thành trước thời hạn. Trân trọng!`;
+    navigator.clipboard.writeText(text);
+    alert(`Đã sao chép nội dung nhắc nhở cho đồng chí ${p.evaluator.name}`);
+  };
+
+  if (loading) return <div className="p-20 text-center animate-pulse text-[10px] font-black uppercase text-slate-400">Đang kiểm tra tiến độ...</div>;
 
   return (
-    <div className="space-y-6 pb-12">
+    <div className="space-y-6 pb-24">
+      {/* KHU VỰC CẢNH BÁO NHANH */}
+      {lazyStaff.length > 0 && (
+        <div className="bg-rose-600 rounded-[2rem] p-8 text-white shadow-2xl shadow-rose-500/30 animate-in slide-in-from-top-4">
+          <div className="flex items-center gap-4 mb-6">
+            <div className="w-12 h-12 bg-white/20 rounded-2xl flex items-center justify-center">
+              <i className="fas fa-exclamation-triangle text-2xl"></i>
+            </div>
+            <div>
+              <h2 className="text-xl font-black uppercase">Cán bộ chưa thực hiện đánh giá</h2>
+              <p className="text-rose-100 text-[10px] font-bold uppercase tracking-widest">Phát hiện {lazyStaff.length} nhân sự chưa có bất kỳ lượt đánh giá nào (0%)</p>
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-3">
+            {lazyStaff.map(p => (
+              <div key={p.evaluator.id} className="bg-white/10 backdrop-blur-md px-4 py-3 rounded-2xl border border-white/20 flex items-center gap-4">
+                <span className="text-[11px] font-black uppercase">{p.evaluator.name}</span>
+                <button onClick={() => handleCopyReminder(p)} className="text-[9px] font-black bg-white text-rose-600 px-3 py-1 rounded-lg hover:bg-rose-50 transition-colors uppercase">Nhắc nhở</button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
         <div className="space-y-3">
-          <h1 className="text-2xl font-black text-slate-900 uppercase">Giám sát Đơn vị</h1>
+          <h1 className="text-2xl font-black text-slate-900 uppercase">Giám sát & Đôn đốc</h1>
           <div className="flex flex-wrap gap-3">
-             <div className="space-y-1">
-              <label className="text-[8px] font-black text-slate-400 uppercase tracking-widest ml-1">Cơ quan</label>
-              <select 
-                value={selectedAgencyId} 
-                onChange={(e) => setSelectedAgencyId(e.target.value)} 
-                className="w-full sm:w-64 bg-white border border-slate-200 rounded-xl px-4 py-2.5 text-[10px] font-black shadow-sm outline-none uppercase"
-              >
-                {agencies.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
-              </select>
-            </div>
-            <div className="space-y-1">
-              <label className="text-[8px] font-black text-slate-400 uppercase tracking-widest ml-1">Đợt đánh giá</label>
-              <select 
-                value={selectedCycleId} 
-                onChange={(e) => setSelectedCycleId(e.target.value)} 
-                className="w-full sm:w-48 bg-blue-50 text-blue-700 border-none rounded-xl px-4 py-2.5 text-[10px] font-black shadow-sm outline-none uppercase"
-              >
-                <option value="all">Tất cả các đợt</option>
-                {allCycles.map(c => <option key={c.id} value={c.id}>{c.name} {c.status === 'ACTIVE' ? '(HIỆN TẠI)' : ''}</option>)}
-              </select>
-            </div>
+            <select value={selectedAgencyId} onChange={(e) => setSelectedAgencyId(e.target.value)} className="bg-white border border-slate-200 rounded-xl px-4 py-2 text-[10px] font-black uppercase outline-none">
+              {agencies.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+            </select>
+            <select value={selectedCycleId} onChange={(e) => setSelectedCycleId(e.target.value)} className="bg-white border border-slate-200 rounded-xl px-4 py-2 text-[10px] font-black uppercase outline-none">
+              <option value="all">Chọn đợt đánh giá</option>
+              {allCycles.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
           </div>
+        </div>
+        <div className="flex items-center gap-3">
+           <button 
+              onClick={() => setOnlyIncomplete(!onlyIncomplete)}
+              className={`px-6 py-3 rounded-xl text-[9px] font-black uppercase transition-all flex items-center gap-2 ${onlyIncomplete ? 'bg-rose-600 text-white' : 'bg-white text-slate-600 border border-slate-200'}`}
+           >
+              <i className="fas fa-filter"></i>
+              {onlyIncomplete ? 'Đang lọc: Chưa xong' : 'Lọc người chưa xong'}
+           </button>
         </div>
       </div>
 
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-6">
-        {[
-          { label: 'Tổng nhân sự', val: analytics.totalStaff, icon: 'fa-users', color: 'slate' },
-          { label: 'Đã đánh giá', val: `${analytics.completionRate}%`, icon: 'fa-tasks', color: 'emerald' },
-          { label: 'Điểm trung bình', val: analytics.avgScore, icon: 'fa-star', color: 'blue' },
-          { label: 'Tổng lượt ĐG', val: analytics.totalEvals, icon: 'fa-comments', color: 'amber' },
-        ].map((item, idx) => (
-          <div key={idx} className="bg-white p-4 md:p-6 rounded-2xl border border-slate-200 shadow-sm">
-            <p className="text-[8px] md:text-[9px] text-slate-400 font-black uppercase tracking-widest mb-2">{item.label}</p>
-            <div className="flex items-center justify-between">
-              <h3 className="text-xl md:text-2xl font-black text-slate-900">{item.val}</h3>
-              <i className={`fas ${item.icon} text-slate-100 text-2xl`}></i>
-            </div>
-          </div>
-        ))}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+         <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
+            <p className="text-[8px] text-slate-400 font-black uppercase tracking-widest mb-1">Tổng nhân sự</p>
+            <h3 className="text-2xl font-black text-slate-900">{agencyStaff.length}</h3>
+         </div>
+         <div className="bg-rose-50 p-6 rounded-2xl border border-rose-100 shadow-sm">
+            <p className="text-[8px] text-rose-400 font-black uppercase tracking-widest mb-1">Chưa hoàn thành</p>
+            <h3 className="text-2xl font-black text-rose-600">{progressReport.filter(p => !p.isComplete).length}</h3>
+         </div>
+         <div className="bg-emerald-50 p-6 rounded-2xl border border-emerald-100 shadow-sm">
+            <p className="text-[8px] text-emerald-400 font-black uppercase tracking-widest mb-1">Đã hoàn thành</p>
+            <h3 className="text-2xl font-black text-emerald-600">{progressReport.filter(p => p.isComplete).length}</h3>
+         </div>
+         <div className="bg-blue-50 p-6 rounded-2xl border border-blue-100 shadow-sm">
+            <p className="text-[8px] text-blue-400 font-black uppercase tracking-widest mb-1">Tỉ lệ đơn vị</p>
+            <h3 className="text-2xl font-black text-blue-600">
+               {agencyStaff.length > 0 ? Math.round((progressReport.filter(p => p.isComplete).length / agencyStaff.length) * 100) : 0}%
+            </h3>
+         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <div className="bg-white p-6 md:p-8 rounded-[2rem] border border-slate-200 shadow-sm">
-          <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-8 border-l-4 border-blue-600 pl-4">Biểu đồ Năng lực Tập thể</h3>
-          <div className="h-64 md:h-80 relative min-h-0 min-w-0">
-            <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
-              <RadarChart cx="50%" cy="50%" outerRadius="80%" data={analytics.radarData}>
-                <PolarGrid stroke="#e2e8f0" />
-                <PolarAngleAxis dataKey="subject" tick={{fontSize: 9, fontWeight: 700, fill: '#64748b'}} />
-                <PolarRadiusAxis angle={30} domain={[0, 10]} tick={false} axisLine={false} />
-                <Radar name="Cơ quan" dataKey="A" stroke="#3b82f6" fill="#3b82f6" fillOpacity={0.4} />
-                <Tooltip />
-              </RadarChart>
-            </ResponsiveContainer>
-          </div>
-          <p className="text-[8px] text-center text-slate-400 uppercase font-bold mt-4">Phân tích đa chiều dựa trên {analytics.totalEvals} lượt đánh giá xác thực</p>
-        </div>
-
-        <div className="bg-white p-6 md:p-8 rounded-[2rem] border border-slate-200 shadow-sm overflow-hidden flex flex-col">
-          <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-6 border-l-4 border-emerald-500 pl-4">Cán bộ Tiêu biểu (Đợt này)</h3>
-          <div className="space-y-3 flex-1 overflow-y-auto custom-scrollbar pr-2">
-            {agencyStaff
-              .map(s => {
-                const sEvals = filteredEvaluations.filter(e => e.evaluateeId === s.id);
-                const avg = sEvals.length > 0 ? (sEvals.reduce((acc, curr) => acc + (curr.scores.professionalism + curr.scores.productivity + curr.scores.collaboration + curr.scores.innovation + curr.scores.discipline) / 5, 0) / sEvals.length) : 0;
-                return { ...s, avg };
-              })
-              .sort((a, b) => b.avg - a.avg)
-              .slice(0, 8)
-              .map((staff, i) => (
-                <div key={staff.id} className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl border border-slate-100 transition-all hover:bg-white hover:shadow-md active:scale-[0.98]">
-                  <div className="flex items-center gap-3">
-                    <img 
-                      src={getAvatarUrl(staff)} 
-                      className="w-10 h-10 rounded-xl object-cover border border-slate-200" 
-                      onError={(e) => { (e.target as HTMLImageElement).src = `https://ui-avatars.com/api/?name=${encodeURIComponent(staff.name)}&background=3b82f6&color=fff&bold=true` }}
-                    />
+      <div className="bg-white rounded-[2.5rem] border border-slate-200 shadow-xl overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full text-left">
+            <thead className="bg-slate-50 text-[10px] font-black text-slate-400 uppercase border-b border-slate-100">
+              <tr>
+                <th className="px-8 py-5">Nhân sự thực hiện</th>
+                <th className="px-8 py-5 text-center">Tiến độ</th>
+                <th className="px-8 py-5">Còn thiếu đánh giá ai?</th>
+                <th className="px-8 py-5 text-right">Tác vụ</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {progressReport.map((p, idx) => (
+                <tr key={idx} className={`hover:bg-slate-50 transition-colors ${p.percent === 0 ? 'bg-rose-50/30' : ''}`}>
+                  <td className="px-8 py-6">
                     <div>
-                      <p className="text-[11px] font-black text-slate-900 uppercase leading-tight">{staff.name}</p>
-                      <p className="text-[8px] text-slate-400 font-bold uppercase tracking-widest">{staff.position}</p>
+                      <p className="text-[11px] font-black text-slate-900 uppercase">{p.evaluator.name}</p>
+                      <p className="text-[8px] text-slate-400 font-bold uppercase">{p.evaluator.position}</p>
                     </div>
-                  </div>
-                  <div className="text-right">
-                    <span className="text-sm font-black text-blue-600">{staff.avg > 0 ? staff.avg.toFixed(1) : '--'}</span>
-                    <p className="text-[7px] text-slate-400 font-black uppercase">Điểm TB</p>
-                  </div>
-                </div>
+                  </td>
+                  <td className="px-8 py-6 text-center">
+                    <div className="flex flex-col items-center">
+                      <span className={`text-[10px] font-black ${p.isComplete ? 'text-emerald-600' : p.percent < 30 ? 'text-rose-600 animate-pulse' : 'text-amber-600'}`}>
+                        {p.percent}% ({p.doneCount}/{p.totalRequired})
+                      </span>
+                      <div className="w-24 h-1.5 bg-slate-100 rounded-full mt-2 overflow-hidden border border-slate-200">
+                        <div className={`h-full transition-all duration-1000 ${p.isComplete ? 'bg-emerald-500' : p.percent < 30 ? 'bg-rose-500' : 'bg-amber-500'}`} style={{ width: `${p.percent}%` }}></div>
+                      </div>
+                    </div>
+                  </td>
+                  <td className="px-8 py-6">
+                    {p.isComplete ? (
+                      <span className="text-[9px] font-black text-emerald-600 uppercase italic">Đã xong hoàn tất</span>
+                    ) : (
+                      <div className="flex flex-wrap gap-1">
+                        {p.missingNames.slice(0, 3).map((name, i) => (
+                          <span key={i} className="px-2 py-1 bg-white border border-rose-100 text-rose-600 rounded-lg text-[7px] font-black uppercase">
+                            {name}
+                          </span>
+                        ))}
+                        {p.missingNames.length > 3 && <span className="text-[7px] font-bold text-slate-400">+{p.missingNames.length - 3} người khác</span>}
+                      </div>
+                    )}
+                  </td>
+                  <td className="px-8 py-6 text-right">
+                    {!p.isComplete && (
+                      <button 
+                        onClick={() => handleCopyReminder(p)}
+                        className="p-3 bg-blue-50 text-blue-600 rounded-xl hover:bg-blue-600 hover:text-white transition-all group"
+                        title="Sao chép nội dung nhắc nhở"
+                      >
+                        <i className="fas fa-copy text-xs"></i>
+                      </button>
+                    )}
+                  </td>
+                </tr>
               ))}
-              {agencyStaff.length === 0 && <div className="text-center py-20 text-slate-400 text-[10px] font-black uppercase">Chưa có dữ liệu nhân sự</div>}
-          </div>
+              {progressReport.length === 0 && (
+                <tr>
+                  <td colSpan={4} className="py-20 text-center text-[10px] font-black uppercase text-slate-300 tracking-widest">
+                    Không có nhân sự nào cần đôn đốc trong danh sách này
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
         </div>
       </div>
     </div>

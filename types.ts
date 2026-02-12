@@ -1,11 +1,6 @@
 
 export type Role = 'ADMIN' | 'LEADER' | 'EMPLOYEE';
 
-export interface Region {
-  id: string;
-  name: string;
-}
-
 export interface User {
   id: string;
   name: string;
@@ -25,20 +20,34 @@ export interface Agency {
   regionId: string;
 }
 
-export interface EvaluationCriteria {
-  professionalism: number; // Chuyên môn
-  productivity: number; // Hiệu suất
-  collaboration: number; // Hợp tác
-  innovation: number; // Đổi mới
-  discipline: number; // Kỷ luật
+export interface Region {
+  id: string;
+  name: string;
 }
+
+export interface Criterion {
+  id: string;
+  name: string;
+  description: string;
+  order: number;
+}
+
+export interface RatingConfig {
+  id: string;
+  label: string;
+  minScore: number;
+  color: string;
+  order: number;
+}
+
+export type EvaluationScores = Record<string, number>;
 
 export interface Evaluation {
   id: string;
   evaluatorId: string;
   evaluateeId: string;
   cycleId: string;
-  scores: EvaluationCriteria;
+  scores: EvaluationScores;
   comment: string;
   timestamp: string;
 }
@@ -48,21 +57,16 @@ export interface EvaluationCycle {
   name: string;
   startDate: string;
   endDate: string;
-  status: 'ACTIVE' | 'CLOSED' | 'UPCOMING';
-  targetAgencyIds: string[]; // ['all'] hoặc danh sách ID cơ quan cụ thể
+  status: 'ACTIVE' | 'CLOSED' | 'UPCOMING' | 'PAUSED';
+  targetAgencyIds: string[];
+  criteria: Criterion[]; 
+  ratings: RatingConfig[]; 
 }
 
 export interface PerformanceStats {
-  averageScores: EvaluationCriteria;
+  averageScores: EvaluationScores;
   overallAverage: number;
-  rating: 'Xuất sắc' | 'Tốt' | 'Khá' | 'Trung bình' | 'Yếu';
+  ratingLabel: string;
+  ratingColor: string;
   totalEvaluations: number;
-  rankInAgency: number;
-}
-
-export interface AIAnalysis {
-  summary: string;
-  strengths: string[];
-  weaknesses: string[];
-  recommendation: string;
 }

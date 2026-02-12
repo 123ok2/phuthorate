@@ -19,6 +19,7 @@ const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<string>('portal');
   const [loading, setLoading] = useState(true);
   const [needsOnboarding, setNeedsOnboarding] = useState(false);
+  const [isOffline, setIsOffline] = useState(false);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
@@ -26,48 +27,30 @@ const App: React.FC = () => {
       
       if (user) {
         try {
+          // Thử lấy doc từ Firestore (tự động ưu tiên cache nếu offline)
           const userDoc = await getDoc(doc(db, "users", user.uid));
           
-          // Kiểm tra đặc quyền Admin cho email cụ thể
-          const isAdminEmail = user.email === 'duyhanh@thucuc.com';
-          
           if (userDoc.exists()) {
-            let data = userDoc.data() as User;
-            
-            // Nếu là email admin nhưng role chưa phải admin thì cập nhật lại
-            if (isAdminEmail && data.role !== 'ADMIN') {
-              data = { ...data, role: 'ADMIN' };
-              await setDoc(doc(db, "users", user.uid), data, { merge: true });
-            }
-            
+            const data = userDoc.data() as User;
             setCurrentUser(data);
             setNeedsOnboarding(false);
+            
             if (data.role === 'ADMIN' || data.role === 'LEADER') {
-               setActiveTab('admin');
+               setActiveTab('dashboard');
+            } else {
+               setActiveTab('portal');
             }
           } else {
-            // Nếu là tài khoản Admin mới tinh chưa có profile
-            if (isAdminEmail) {
-              const adminUser: User = {
-                id: user.uid,
-                name: "ADMIN TỔNG",
-                email: user.email,
-                avatar: "",
-                role: 'ADMIN',
-                agencyId: 'SYSTEM',
-                department: 'QUẢN TRỊ',
-                position: 'QUẢN TRỊ VIÊN'
-              };
-              await setDoc(doc(db, "users", user.uid), adminUser);
-              setCurrentUser(adminUser);
-              setActiveTab('admin');
-            } else {
-              setNeedsOnboarding(true);
-            }
+            setNeedsOnboarding(true);
           }
         } catch (error: any) {
-          console.error("Lỗi xác thực Firestore:", error);
-          setNeedsOnboarding(true);
+          console.error("Lỗi xác thực hồ sơ:", error);
+          // Nếu lỗi mạng, vẫn cho phép vào nếu đã có currentUser trong state (đang nạp dở)
+          setIsOffline(true);
+          // Nếu không lấy được doc mà đang offline, ta không thể làm gì hơn ngoài việc đợi mạng
+          if (!currentUser) {
+            setLoading(false); 
+          }
         }
       } else {
         setCurrentUser(null);
@@ -81,11 +64,17 @@ const App: React.FC = () => {
   const handleProfileComplete = (user: User) => {
     setCurrentUser(user);
     setNeedsOnboarding(false);
-    setActiveTab(user.role === 'EMPLOYEE' ? 'portal' : 'admin');
+    setActiveTab(user.role === 'EMPLOYEE' ? 'portal' : 'dashboard');
   };
 
   const renderContent = () => {
-    if (!currentUser) return <div className="p-10 text-center text-slate-400 uppercase text-[10px] font-black animate-pulse">Đang nạp hồ sơ...</div>;
+    if (!currentUser) return (
+      <div className="p-20 text-center">
+        <div className="animate-pulse text-[10px] font-black uppercase text-slate-400 tracking-widest">
+          {isOffline ? 'ĐANG ĐỢI KẾT NỐI MẠNG ĐỂ TẢI HỒ SƠ...' : 'ĐANG NẠP HỒ SƠ NGƯỜI DÙNG...'}
+        </div>
+      </div>
+    );
 
     if (activeTab === 'public-board') return <PublicBoard user={currentUser} />;
 
@@ -93,15 +82,19 @@ const App: React.FC = () => {
       case 'ADMIN':
         if (activeTab === 'admin') return <AdminPanel currentUser={currentUser} />;
         if (activeTab === 'portal') return <EmployeePortal user={currentUser} />;
+        if (activeTab === 'dashboard') return <LeaderDashboard user={currentUser} />;
         return <AdminPanel currentUser={currentUser} />;
       case 'LEADER':
         if (activeTab === 'dashboard') return <LeaderDashboard user={currentUser} />;
         if (activeTab === 'portal') return <EmployeePortal user={currentUser} />;
+        if (activeTab === 'public-board') return <PublicBoard user={currentUser} />;
         return <LeaderDashboard user={currentUser} />;
       case 'EMPLOYEE':
+        if (activeTab === 'portal') return <EmployeePortal user={currentUser} />;
+        if (activeTab === 'public-board') return <PublicBoard user={currentUser} />;
         return <EmployeePortal user={currentUser} />;
       default:
-        return <div className="p-10 text-center text-slate-500 font-medium uppercase text-xs">Vai trò không xác định</div>;
+        return <div className="p-10 text-center text-slate-500 font-black uppercase text-[10px]">Vai trò không xác định</div>;
     }
   };
 
@@ -109,8 +102,10 @@ const App: React.FC = () => {
     return (
       <div className="min-h-screen flex items-center justify-center bg-slate-900">
         <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500 mx-auto mb-4"></div>
-          <p className="text-white text-[9px] font-black uppercase tracking-[0.3em]">Khởi động Phú Thọ Rate...</p>
+          <div className="w-16 h-1 bg-blue-600/20 rounded-full mb-8 overflow-hidden">
+            <div className="w-1/2 h-full bg-blue-600 animate-[loading_1.5s_infinite_ease-in-out]"></div>
+          </div>
+          <p className="text-white text-[10px] font-black uppercase tracking-[0.4em] animate-pulse">Kết nối Phú Thọ Rate</p>
         </div>
       </div>
     );
@@ -133,6 +128,11 @@ const App: React.FC = () => {
       />
       
       <div className="flex-1 flex flex-col min-w-0 relative pb-20 md:pb-0">
+        {isOffline && (
+          <div className="bg-rose-600 text-white text-[9px] font-black uppercase py-2 text-center tracking-widest z-50">
+            MẤT KẾT NỐI SERVER - HỆ THỐNG ĐANG CHẠY CHẾ ĐỘ NGOẠI TUYẾN
+          </div>
+        )}
         <Header 
           user={currentUser!} 
           onSwitchUser={(u) => setCurrentUser(u)} 
