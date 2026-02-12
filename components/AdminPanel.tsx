@@ -549,17 +549,18 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser }) => {
                 {cycles.map((c) => (
                   <div key={c.id} className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm hover:shadow-lg transition-all group border-b-4" style={{ borderColor: c.status === 'ACTIVE' ? '#10b981' : '#e2e8f0' }}>
                      <div className="mb-4">
-                        <div className="flex items-start justify-between gap-4 mb-3">
-                           <h4 className="text-[12px] font-black text-slate-900 uppercase truncate pr-4 group-hover:text-blue-600 transition-colors">{c.name}</h4>
-                           <div className="flex items-center gap-1.5 shrink-0">
+                        <h4 className="text-[12px] font-black text-slate-900 uppercase mb-3 leading-snug group-hover:text-blue-600 transition-colors">{c.name}</h4>
+                        <div className="flex items-center justify-between mb-3">
+                            <div className="flex items-center gap-2 text-[8px] text-slate-400 font-bold uppercase tracking-widest">
+                               <i className="far fa-calendar-alt"></i> {c.startDate} - {c.endDate}
+                            </div>
+                            <div className="flex items-center gap-1.5 shrink-0">
                                <button onClick={() => handleExportCycleReport(c)} title="Báo cáo Excel" className="w-8 h-8 flex items-center justify-center text-emerald-600 bg-emerald-50 rounded-xl hover:bg-emerald-600 hover:text-white transition-all"><i className="fas fa-file-excel text-[10px]"></i></button>
                                <button onClick={() => handleCloneCycle(c)} title="Sao chép (Clone)" className="w-8 h-8 flex items-center justify-center text-slate-600 bg-slate-50 rounded-xl hover:bg-slate-900 hover:text-white transition-all"><i className="fas fa-copy text-[10px]"></i></button>
                                <button onClick={() => setEditingCycle(c)} title="Chỉnh sửa" className="w-8 h-8 flex items-center justify-center text-blue-600 bg-blue-50 rounded-xl hover:bg-blue-600 hover:text-white transition-all"><i className="fas fa-edit text-[10px]"></i></button>
-                           </div>
+                            </div>
                         </div>
-                        <div className="flex items-center gap-2 text-[8px] text-slate-400 font-bold uppercase tracking-widest">
-                           <i className="far fa-calendar-alt"></i> {c.startDate} - {c.endDate}
-                        </div>
+
                         {c.targetAgencyIds && !c.targetAgencyIds.includes('all') && (
                            <div className="mt-3 flex flex-wrap gap-1">
                               {c.targetAgencyIds.slice(0, 3).map(aid => {
