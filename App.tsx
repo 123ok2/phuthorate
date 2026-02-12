@@ -9,6 +9,7 @@ import AdminPanel from './components/AdminPanel';
 import Login from './components/Login';
 import ProfileSetup from './components/ProfileSetup';
 import PublicBoard from './components/PublicBoard';
+import Introduction from './components/Introduction';
 import { auth, db } from './firebase';
 import { onAuthStateChanged } from 'firebase/auth';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
@@ -77,6 +78,7 @@ const App: React.FC = () => {
     );
 
     if (activeTab === 'public-board') return <PublicBoard user={currentUser} />;
+    if (activeTab === 'guide') return <Introduction user={currentUser} />;
 
     switch (currentUser.role) {
       case 'ADMIN':

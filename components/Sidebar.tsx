@@ -15,6 +15,7 @@ const Sidebar: React.FC<SidebarProps> = ({ role, activeTab, setActiveTab }) => {
     { id: 'dashboard', icon: 'fa-chart-pie', label: 'Tổng quan', roles: ['LEADER', 'ADMIN'] },
     { id: 'portal', icon: 'fa-user-check', label: 'Cổng ĐG', fullLabel: 'Cổng Đánh giá', roles: ['LEADER', 'EMPLOYEE'] },
     { id: 'public-board', icon: 'fa-users-viewfinder', label: 'Công khai', fullLabel: 'Bảng công khai', roles: ['LEADER', 'EMPLOYEE'] },
+    { id: 'guide', icon: 'fa-book-open', label: 'Hướng dẫn', roles: ['ADMIN', 'LEADER', 'EMPLOYEE'] },
     { id: 'admin', icon: 'fa-cogs', label: 'Quản trị', fullLabel: 'Quản trị hệ thống', roles: ['ADMIN'] },
   ];
 

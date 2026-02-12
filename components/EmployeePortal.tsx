@@ -18,9 +18,9 @@ const EmployeePortal: React.FC<EmployeePortalProps> = ({ user }) => {
   const [cycles, setCycles] = useState<EvaluationCycle[]>([]);
   const [loading, setLoading] = useState(true);
   
-  const [comment, setComment] = useState('');
   const [scores, setScores] = useState<EvaluationScores>({});
   const [submitting, setSubmitting] = useState(false);
+  const [expandedCrit, setExpandedCrit] = useState<string | null>(null);
 
   const getAvatarUrl = (u: Partial<User>) => {
     if (u.avatar && u.avatar.startsWith('data:image')) return u.avatar;
@@ -112,13 +112,12 @@ const EmployeePortal: React.FC<EmployeePortalProps> = ({ user }) => {
     try {
       const payload = { 
         evaluatorId: user.id, evaluateeId: evaluatingPeer.id, cycleId: selectedCycleId, 
-        scores, comment: comment.toUpperCase(), timestamp: new Date().toISOString(), 
+        scores, comment: '', timestamp: new Date().toISOString(), 
         agencyId: user.agencyId 
       };
       await addDoc(collection(db, "evaluations"), { ...payload, createdAt: serverTimestamp() });
       alert(`ĐÃ HOÀN THÀNH ĐÁNH GIÁ CHO ĐỒNG NGHIỆP: ${evaluatingPeer.name}`);
       setEvaluatingPeer(null);
-      setComment('');
       setScores({});
       setAllEvaluationsDone(prev => [...prev, payload as any]);
     } catch (error) { console.error(error); alert("CÓ LỖI XẢY RA!"); }
@@ -163,44 +162,92 @@ const EmployeePortal: React.FC<EmployeePortalProps> = ({ user }) => {
 
       {activeTab === 'pending' ? (
         evaluatingPeer && selectedCycle ? (
-          <div className="bg-white rounded-[2.5rem] border border-slate-200 shadow-2xl overflow-hidden">
-             <div className="bg-slate-900 p-8 text-white flex items-center gap-5">
-                <button onClick={() => setEvaluatingPeer(null)} className="w-10 h-10 flex items-center justify-center bg-white/10 rounded-xl"><i className="fas fa-arrow-left"></i></button>
-                <div className="flex items-center gap-4">
-                  <img src={getAvatarUrl(evaluatingPeer)} className="w-14 h-14 rounded-2xl object-cover border-2 border-white/10" />
-                  <div>
-                    <h3 className="text-lg font-black uppercase leading-none mb-1">{evaluatingPeer.name}</h3>
-                    <p className="text-[9px] font-bold text-blue-400 uppercase tracking-widest">{evaluatingPeer.position} | {evaluatingPeer.department}</p>
-                  </div>
-                </div>
-             </div>
-             <div className="p-8 md:p-12">
-                {!cycleStatus.isOpen && (
-                  <div className="bg-rose-50 border border-rose-100 p-6 rounded-3xl mb-10 text-center">
-                    <p className="text-rose-600 font-black text-xs uppercase tracking-widest animate-pulse">{cycleStatus.msg}</p>
-                  </div>
-                )}
-                <div className={`grid grid-cols-1 lg:grid-cols-2 gap-12 ${!cycleStatus.isOpen ? 'opacity-40 pointer-events-none' : ''}`}>
-                    <div className="space-y-6">
-                       {(selectedCycle.criteria || []).map(c => (
-                         <div key={c.id} className="space-y-3 p-4 bg-slate-50 rounded-2xl border border-slate-100">
-                            <div className="flex justify-between items-end">
-                               <span className="text-[10px] font-black text-slate-500 uppercase">{c.name}</span>
-                               <span className="text-2xl font-black text-blue-600">{scores[c.id] || 5}</span>
-                            </div>
-                            <input type="range" min="1" max="10" value={scores[c.id] || 5} onChange={e => setScores({...scores, [c.id]: parseInt(e.target.value)})} className="w-full accent-blue-600" />
-                         </div>
-                       ))}
+          <div className="max-w-4xl mx-auto animate-in slide-in-from-bottom-8 duration-500">
+            <div className="bg-white rounded-[3rem] border border-slate-200 shadow-2xl overflow-hidden">
+               <div className="bg-slate-900 p-8 md:p-10 text-white flex items-center justify-between">
+                  <div className="flex items-center gap-5">
+                    <button onClick={() => setEvaluatingPeer(null)} className="w-10 h-10 flex items-center justify-center bg-white/10 rounded-xl hover:bg-white/20 transition-all"><i className="fas fa-arrow-left"></i></button>
+                    <div className="flex items-center gap-4">
+                      <img src={getAvatarUrl(evaluatingPeer)} className="w-16 h-16 rounded-[1.5rem] object-cover border-2 border-white/10 shadow-lg" />
+                      <div>
+                        <h3 className="text-xl font-black uppercase leading-none mb-1 tracking-tight">{evaluatingPeer.name}</h3>
+                        <p className="text-[10px] font-black text-blue-400 uppercase tracking-widest">{evaluatingPeer.position} | {evaluatingPeer.department}</p>
+                      </div>
                     </div>
-                    <div className="space-y-4">
-                       <label className="text-[9px] font-black text-slate-400 uppercase">Nhận xét</label>
-                       <textarea rows={6} value={comment} onChange={e => setComment(e.target.value)} className="w-full bg-slate-50 border border-slate-100 rounded-[2rem] p-6 text-xs uppercase focus:bg-white outline-none" placeholder="..." />
-                       <button onClick={submitEvaluation} disabled={submitting || !cycleStatus.isOpen} className="w-full bg-blue-600 text-white py-5 rounded-3xl font-black text-[10px] uppercase shadow-xl hover:bg-slate-900 transition-all disabled:opacity-50">
-                          GỬI ĐÁNH GIÁ
-                       </button>
+                  </div>
+                  <div className="hidden md:block text-right">
+                    <p className="text-[8px] font-black text-slate-500 uppercase tracking-widest mb-1">Mã cán bộ</p>
+                    <p className="text-[10px] font-black text-white/40 uppercase">#{evaluatingPeer.id.slice(0,8)}</p>
+                  </div>
+               </div>
+
+               <div className="p-8 md:p-12 space-y-10">
+                  {!cycleStatus.isOpen && (
+                    <div className="bg-rose-50 border border-rose-100 p-6 rounded-3xl text-center">
+                      <p className="text-rose-600 font-black text-xs uppercase tracking-widest animate-pulse">{cycleStatus.msg}</p>
                     </div>
-                </div>
-             </div>
+                  )}
+                  
+                  <div className={`space-y-8 ${!cycleStatus.isOpen ? 'opacity-40 pointer-events-none' : ''}`}>
+                      <div className="grid grid-cols-1 gap-6">
+                         {(selectedCycle.criteria || []).map(c => (
+                           <div key={c.id} className="group p-8 bg-slate-50 rounded-[2.5rem] border border-slate-100 hover:bg-white hover:border-blue-100 transition-all hover:shadow-xl">
+                              <div className="flex justify-between items-start mb-6 gap-6">
+                                 <div className="space-y-2 flex-1">
+                                    <span className="text-[14px] font-black text-slate-900 uppercase tracking-wider">{c.name}</span>
+                                    <div className="flex items-center gap-4">
+                                       <button 
+                                          onClick={() => setExpandedCrit(expandedCrit === c.id ? null : c.id)}
+                                          className="text-[9px] font-black text-blue-600 uppercase tracking-widest flex items-center gap-2 hover:bg-blue-50 px-3 py-1 rounded-lg transition-colors"
+                                       >
+                                          <i className={`fas ${expandedCrit === c.id ? 'fa-minus-circle' : 'fa-info-circle'} text-xs`}></i>
+                                          {expandedCrit === c.id ? 'Đóng chi tiết' : 'Xem chi tiết căn cứ'}
+                                       </button>
+                                    </div>
+                                    {expandedCrit === c.id && (
+                                       <div className="mt-4 p-5 bg-white rounded-2xl border border-blue-50 text-[11px] font-medium leading-relaxed text-slate-600 animate-in slide-in-from-top-2 duration-300">
+                                          {c.description}
+                                       </div>
+                                    )}
+                                 </div>
+                                 <div className="w-20 h-20 bg-white rounded-[1.5rem] flex items-center justify-center border-2 border-slate-100 shadow-lg shrink-0">
+                                    <span className="text-4xl font-black text-blue-600 tracking-tighter">{scores[c.id] || 50}</span>
+                                 </div>
+                              </div>
+                              <div className="px-2 pt-4">
+                                <input 
+                                  type="range" 
+                                  min="1" 
+                                  max="100" 
+                                  step="1"
+                                  value={scores[c.id] || 50} 
+                                  onChange={e => setScores({...scores, [c.id]: parseInt(e.target.value)})} 
+                                  className="w-full h-3 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-blue-600 transition-all" 
+                                />
+                                <div className="flex justify-between mt-4 px-1">
+                                  {[10,20,30,40,50,60,70,80,90,100].map(v => (
+                                    <span key={v} className={`text-[10px] font-black transition-all ${(scores[c.id] || 50) >= v - 5 && (scores[c.id] || 50) <= v + 5 ? 'text-blue-600 scale-150' : 'text-slate-300'}`}>{v}</span>
+                                  ))}
+                                </div>
+                              </div>
+                           </div>
+                         ))}
+                      </div>
+
+                      <div className="pt-6">
+                         <button 
+                            onClick={submitEvaluation} 
+                            disabled={submitting || !cycleStatus.isOpen} 
+                            className="w-full bg-blue-600 text-white py-7 rounded-3xl font-black text-[14px] uppercase shadow-2xl shadow-blue-500/30 hover:bg-slate-900 hover:scale-[1.02] active:scale-[0.98] transition-all disabled:opacity-50 tracking-[0.4em]"
+                         >
+                            {submitting ? <i className="fas fa-circle-notch animate-spin mr-3"></i> : <i className="fas fa-paper-plane mr-3"></i>}
+                            GỬI ĐÁNH GIÁ Cán bộ
+                         </button>
+                         <p className="text-center mt-8 text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Dữ liệu sau khi gửi sẽ không thể chỉnh sửa</p>
+                      </div>
+                  </div>
+               </div>
+            </div>
           </div>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">

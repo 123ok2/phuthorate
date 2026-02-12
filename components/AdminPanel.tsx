@@ -28,10 +28,10 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser }) => {
       { id: 'c3', name: 'PHỐI HỢP', description: 'KHẢ NĂNG LÀM VIỆC NHÓM VÀ HỖ TRỢ ĐỒNG NGHIỆP', order: 2 }
     ],
     ratings: [
-      { id: 'r1', label: 'XUẤT SẮC', minScore: 9.0, color: '#10b981', order: 0 },
-      { id: 'r2', label: 'TỐT', minScore: 8.0, color: '#3b82f6', order: 1 },
-      { id: 'r3', label: 'KHÁ', minScore: 6.5, color: '#f59e0b', order: 2 },
-      { id: 'r4', label: 'TRUNG BÌNH', minScore: 5.0, color: '#64748b', order: 3 },
+      { id: 'r1', label: 'XUẤT SẮC', minScore: 90.0, color: '#10b981', order: 0 },
+      { id: 'r2', label: 'TỐT', minScore: 80.0, color: '#3b82f6', order: 1 },
+      { id: 'r3', label: 'KHÁ', minScore: 65.0, color: '#f59e0b', order: 2 },
+      { id: 'r4', label: 'TRUNG BÌNH', minScore: 50.0, color: '#64748b', order: 3 },
       { id: 'r5', label: 'YẾU', minScore: 0, color: '#ef4444', order: 4 }
     ]
   });
@@ -109,7 +109,6 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser }) => {
     finally { setProcessing(false); }
   };
 
-  // --- LOGIC CẬP NHẬT (EDIT) ---
   const handleUpdateCycle = async (e: React.FormEvent) => {
       e.preventDefault();
       if (!editingCycle) return;
@@ -117,7 +116,6 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser }) => {
       setProcessing(true);
       try {
           const cycleRef = doc(db, "cycles", editingCycle.id);
-          // Loại bỏ field id ra khỏi object trước khi update
           const { id, ...updateData } = editingCycle;
           await updateDoc(cycleRef, updateData);
           alert("ĐÃ CẬP NHẬT THÔNG TIN ĐỢT ĐÁNH GIÁ!");
@@ -131,7 +129,6 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser }) => {
       }
   };
 
-  // --- LOGIC HELPER CHO FORM TẠO MỚI ---
   const updateCriterion = (id: string, field: keyof Criterion, value: string) => {
     setNewCycle(prev => ({
       ...prev,
@@ -139,7 +136,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser }) => {
     }));
   };
   const addCycleCriterion = () => {
-    const newCrit: Criterion = { id: `crit_${Date.now()}`, name: 'TIÊU CHÍ MỚI', description: 'MÔ TẢ', order: newCycle.criteria.length };
+    const newCrit: Criterion = { id: `crit_${Date.now()}`, name: 'TIÊU CHÍ MỚI', description: 'MÔ TẢ CHI TIẾT CĂN CỨ ĐÁNH GIÁ', order: newCycle.criteria.length };
     setNewCycle(prev => ({ ...prev, criteria: [...prev.criteria, newCrit] }));
   };
   const removeCycleCriterion = (id: string) => {
@@ -177,7 +174,6 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser }) => {
     });
   };
 
-  // --- LOGIC HELPER CHO FORM CHỈNH SỬA (EDIT) ---
   const toggleEditAgency = (agencyId: string) => {
       if (!editingCycle) return;
       setEditingCycle(prev => {
@@ -202,7 +198,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser }) => {
   const addEditCriterion = () => {
     setEditingCycle(prev => {
         if(!prev) return null;
-        const newCrit: Criterion = { id: `crit_edit_${Date.now()}`, name: 'TIÊU CHÍ', description: 'MÔ TẢ', order: prev.criteria.length };
+        const newCrit: Criterion = { id: `crit_edit_${Date.now()}`, name: 'TIÊU CHÍ', description: 'MÔ TẢ CHI TIẾT', order: prev.criteria.length };
         return { ...prev, criteria: [...prev.criteria, newCrit] };
     });
   };
@@ -279,15 +275,21 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser }) => {
                                         <input type="checkbox" className="hidden" checked={editingCycle.targetAgencyIds?.includes('all')} onChange={() => toggleEditAgency('all')} />
                                         <span className="text-[10px] font-black uppercase">Toàn hệ thống (Tất cả)</span>
                                     </label>
-                                    {agencies.map(agency => (
-                                        <label key={agency.id} className={`flex items-center gap-3 p-3 rounded-xl border cursor-pointer ${editingCycle.targetAgencyIds?.includes(agency.id) ? 'bg-white border-blue-500 shadow-md ring-1 ring-blue-500' : 'bg-white border-slate-200'}`}>
-                                            <div className={`w-4 h-4 rounded border flex items-center justify-center ${editingCycle.targetAgencyIds?.includes(agency.id) ? 'bg-blue-500 border-blue-500' : 'border-slate-300'}`}>
-                                                {editingCycle.targetAgencyIds?.includes(agency.id) && <i className="fas fa-check text-[8px] text-white"></i>}
-                                            </div>
-                                            <input type="checkbox" className="hidden" checked={editingCycle.targetAgencyIds?.includes(agency.id) || false} onChange={() => toggleEditAgency(agency.id)} />
-                                            <span className={`text-[10px] font-black uppercase truncate ${editingCycle.targetAgencyIds?.includes(agency.id) ? 'text-blue-700' : 'text-slate-700'}`}>{agency.name}</span>
-                                        </label>
-                                    ))}
+                                    {agencies.map(agency => {
+                                        const agencyUserCount = users.filter(u => u.agencyId === agency.id).length;
+                                        return (
+                                          <label key={agency.id} className={`flex items-center gap-3 p-3 rounded-xl border cursor-pointer ${editingCycle.targetAgencyIds?.includes(agency.id) ? 'bg-white border-blue-500 shadow-md ring-1 ring-blue-500' : 'bg-white border-slate-200'}`}>
+                                              <div className={`w-4 h-4 rounded border flex items-center justify-center ${editingCycle.targetAgencyIds?.includes(agency.id) ? 'bg-blue-500 border-blue-500' : 'border-slate-300'}`}>
+                                                  {editingCycle.targetAgencyIds?.includes(agency.id) && <i className="fas fa-check text-[8px] text-white"></i>}
+                                              </div>
+                                              <input type="checkbox" className="hidden" checked={editingCycle.targetAgencyIds?.includes(agency.id) || false} onChange={() => toggleEditAgency(agency.id)} />
+                                              <div className="min-w-0">
+                                                  <p className={`text-[10px] font-black uppercase truncate ${editingCycle.targetAgencyIds?.includes(agency.id) ? 'text-blue-700' : 'text-slate-700'}`}>{agency.name}</p>
+                                                  <p className="text-[7px] font-bold text-slate-400 uppercase">{agencyUserCount} nhân sự</p>
+                                              </div>
+                                          </label>
+                                        );
+                                    })}
                                 </div>
                             </div>
                         </div>
@@ -297,14 +299,14 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser }) => {
                                 <label className="text-[11px] font-black text-blue-600 uppercase tracking-widest">Bộ tiêu chí</label>
                                 <button type="button" onClick={addEditCriterion} className="text-[9px] font-black uppercase text-blue-600 hover:underline">+ Thêm</button>
                              </div>
-                             <div className="grid grid-cols-1 gap-3">
+                             <div className="grid grid-cols-1 gap-4">
                                 {editingCycle.criteria?.map((c) => (
-                                  <div key={c.id} className="bg-slate-50 p-3 rounded-xl border border-slate-100 flex gap-3">
-                                     <div className="flex-1 space-y-2">
-                                         <input value={c.name} onChange={e => updateEditCriterion(c.id, 'name', e.target.value)} className="w-full bg-white border border-slate-200 px-3 py-2 rounded-lg text-[10px] font-black uppercase" placeholder="Tên tiêu chí" />
-                                         <input value={c.description} onChange={e => updateEditCriterion(c.id, 'description', e.target.value)} className="w-full bg-white border border-slate-200 px-3 py-2 rounded-lg text-[9px] uppercase" placeholder="Mô tả" />
+                                  <div key={c.id} className="bg-slate-50 p-5 rounded-xl border border-slate-100 flex flex-col gap-4">
+                                     <div className="flex-1 space-y-4">
+                                         <input value={c.name} onChange={e => updateEditCriterion(c.id, 'name', e.target.value)} className="w-full bg-white border border-slate-200 px-4 py-3 rounded-lg text-[11px] font-black uppercase outline-none focus:border-blue-400" placeholder="Tên tiêu chí" />
+                                         <textarea value={c.description} rows={5} onChange={e => updateEditCriterion(c.id, 'description', e.target.value)} className="w-full bg-white border border-slate-200 px-4 py-3 rounded-lg text-[10px] font-medium leading-relaxed outline-none focus:border-blue-400" placeholder="Mô tả căn cứ đánh giá chi tiết..." />
                                      </div>
-                                     <button type="button" onClick={() => removeEditCriterion(c.id)} className="w-8 flex items-center justify-center text-rose-500 hover:bg-rose-50 rounded-lg"><i className="fas fa-trash-alt"></i></button>
+                                     <button type="button" onClick={() => removeEditCriterion(c.id)} className="self-end px-4 py-2 text-[9px] font-black uppercase text-rose-500 hover:bg-rose-50 rounded-lg flex items-center gap-2 transition-colors"><i className="fas fa-trash-alt"></i> Xóa tiêu chí</button>
                                   </div>
                                 ))}
                              </div>
@@ -371,7 +373,6 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser }) => {
                      </div>
                   </div>
 
-                  {/* KHU VỰC CHỌN PHẠM VI CƠ QUAN */}
                   <div className="space-y-3 animate-in slide-in-from-left-2">
                       <div className="flex items-center justify-between">
                          <label className="text-[11px] font-black text-slate-500 uppercase tracking-widest border-l-2 border-slate-300 pl-2">Phạm vi áp dụng</label>
@@ -381,7 +382,6 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser }) => {
                       </div>
                       <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100 max-h-[300px] overflow-y-auto custom-scrollbar">
                           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                              {/* Option All */}
                               <label className={`flex items-center gap-3 p-4 rounded-xl border cursor-pointer transition-all ${newCycle.targetAgencyIds.includes('all') ? 'bg-blue-600 border-blue-600 text-white shadow-lg shadow-blue-500/30' : 'bg-white border-slate-200 text-slate-600 hover:border-blue-400'}`}>
                                   <div className={`w-5 h-5 rounded-md border flex items-center justify-center ${newCycle.targetAgencyIds.includes('all') ? 'bg-white border-white' : 'border-slate-300'}`}>
                                       {newCycle.targetAgencyIds.includes('all') && <i className="fas fa-check text-xs text-blue-600"></i>}
@@ -390,9 +390,9 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser }) => {
                                   <span className="text-[10px] font-black uppercase tracking-wider">Toàn hệ thống (Tất cả)</span>
                               </label>
 
-                              {/* Agencies List */}
                               {agencies.map(agency => {
                                   const isSelected = newCycle.targetAgencyIds.includes(agency.id);
+                                  const agencyUserCount = users.filter(u => u.agencyId === agency.id).length;
                                   return (
                                     <label key={agency.id} className={`flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition-all ${isSelected ? 'bg-white border-blue-500 shadow-md ring-1 ring-blue-500' : 'bg-white border-slate-200 hover:border-blue-300'}`}>
                                         <div className={`w-5 h-5 rounded-md border flex items-center justify-center transition-colors ${isSelected ? 'bg-blue-500 border-blue-500' : 'border-slate-300'}`}>
@@ -401,7 +401,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser }) => {
                                         <input type="checkbox" className="hidden" checked={isSelected} onChange={() => toggleAgencySelection(agency.id)} />
                                         <div className="min-w-0">
                                             <p className={`text-[10px] font-black uppercase truncate ${isSelected ? 'text-blue-700' : 'text-slate-700'}`}>{agency.name}</p>
-                                            <p className="text-[8px] font-bold text-slate-400 uppercase">{agency.employeeCount || 0} nhân sự</p>
+                                            <p className="text-[8px] font-bold text-slate-400 uppercase">{agencyUserCount} nhân sự</p>
                                         </div>
                                     </label>
                                   );
@@ -415,11 +415,11 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser }) => {
                         <label className="text-[11px] font-black text-blue-600 uppercase tracking-widest">Bộ tiêu chí đánh giá</label>
                         <button type="button" onClick={addCycleCriterion} className="bg-blue-600 text-white px-5 py-2.5 rounded-xl text-[9px] font-black uppercase hover:scale-105 transition-transform">+ Thêm tiêu chí</button>
                      </div>
-                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                     <div className="grid grid-cols-1 gap-6">
                         {newCycle.criteria.map((c) => (
-                          <div key={c.id} className="bg-slate-50 p-5 rounded-2xl border border-slate-100 group relative">
-                             <input value={c.name} onChange={e => updateCriterion(c.id, 'name', e.target.value)} className="w-full bg-transparent border-none text-[11px] font-black text-slate-900 uppercase p-0 mb-1 outline-none" placeholder="Tên tiêu chí" />
-                             <textarea value={c.description} onChange={e => updateCriterion(c.id, 'description', e.target.value)} className="w-full bg-transparent border-none text-[9px] text-slate-400 font-bold uppercase p-0 outline-none" placeholder="Mô tả tiêu chí" rows={1} />
+                          <div key={c.id} className="bg-slate-50 p-6 rounded-2xl border border-slate-100 group relative space-y-4">
+                             <input value={c.name} onChange={e => updateCriterion(c.id, 'name', e.target.value)} className="w-full bg-white border border-slate-200 px-4 py-3 rounded-xl text-[11px] font-black text-slate-900 uppercase outline-none focus:border-blue-400 shadow-sm" placeholder="Tên tiêu chí" />
+                             <textarea value={c.description} rows={4} onChange={e => updateCriterion(c.id, 'description', e.target.value)} className="w-full bg-white border border-slate-200 px-4 py-3 rounded-xl text-[10px] text-slate-600 font-medium uppercase outline-none focus:border-blue-400 shadow-sm leading-relaxed" placeholder="Mô tả căn cứ đánh giá chi tiết..." />
                              <button type="button" onClick={() => removeCycleCriterion(c.id)} className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 text-rose-500 transition-opacity p-2"><i className="fas fa-times"></i></button>
                           </div>
                         ))}
